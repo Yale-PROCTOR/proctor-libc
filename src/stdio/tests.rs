@@ -1,6 +1,6 @@
-use std::io::{self, BufRead, BufReader, Cursor, Read};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 
-use super::{fgetc, fgets, fread};
+use super::{fgetc, fgets, fputc, fputs, fread, fwrite};
 
 #[test]
 fn reads_bytes_as_unsigned_integers_and_advances_the_reader() {
@@ -43,6 +43,255 @@ fn propagates_read_errors() {
 
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "read failed");
+}
+
+#[test]
+fn fputc_writes_bytes_and_returns_their_unsigned_values() {
+    let mut writer = Vec::new();
+
+    assert_eq!(fputc(0, &mut writer).unwrap(), 0);
+    assert_eq!(fputc(127, &mut writer).unwrap(), 127);
+    assert_eq!(fputc(128, &mut writer).unwrap(), 128);
+    assert_eq!(fputc(255, &mut writer).unwrap(), 255);
+    assert_eq!(writer, [0, 127, 128, 255]);
+}
+
+#[test]
+fn fputc_converts_the_input_to_an_unsigned_byte() {
+    let mut writer = Vec::new();
+
+    assert_eq!(fputc(-1, &mut writer).unwrap(), 255);
+    assert_eq!(fputc(256, &mut writer).unwrap(), 0);
+    assert_eq!(fputc(511, &mut writer).unwrap(), 255);
+    assert_eq!(writer, [255, 0, 255]);
+}
+
+#[test]
+fn fputc_accepts_dynamically_sized_writers() {
+    let mut bytes = Vec::new();
+    let writer: &mut dyn Write = &mut bytes;
+
+    assert_eq!(fputc(42, writer).unwrap(), 42);
+    assert_eq!(bytes, [42]);
+}
+
+#[test]
+fn fputc_reports_a_writer_that_makes_no_progress() {
+    struct ZeroWriter;
+
+    impl Write for ZeroWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let error = fputc(42, &mut ZeroWriter).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+}
+
+#[test]
+fn fputc_propagates_write_errors() {
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::other("write failed"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let error = fputc(42, &mut FailingWriter).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "write failed");
+}
+
+#[test]
+fn fputc_does_not_retry_an_interrupted_write() {
+    struct InterruptedWriter {
+        calls: usize,
+    }
+
+    impl Write for InterruptedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = InterruptedWriter { calls: 0 };
+    let error = fputc(42, &mut writer).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    assert_eq!(writer.calls, 1);
+}
+
+#[test]
+fn fputs_writes_bytes_before_the_first_null_and_returns_zero() {
+    let mut writer = Vec::new();
+
+    assert_eq!(
+        fputs(&[b'a' as i8, -128, -1, 0, b'b' as i8], &mut writer).unwrap(),
+        0
+    );
+    assert_eq!(writer, [b'a', 128, 255]);
+}
+
+#[test]
+fn fputs_writes_the_entire_slice_when_it_has_no_null() {
+    let mut writer = Vec::new();
+
+    assert_eq!(fputs(&[b'a' as i8, b'b' as i8], &mut writer).unwrap(), 0);
+    assert_eq!(writer, b"ab");
+}
+
+#[test]
+fn fputs_does_not_write_an_empty_string() {
+    struct PanickingWriter;
+
+    impl Write for PanickingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("write called for an empty string")
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("flush called")
+        }
+    }
+
+    assert_eq!(fputs(&[], &mut PanickingWriter).unwrap(), 0);
+    assert_eq!(fputs(&[0, b'a' as i8], &mut PanickingWriter).unwrap(), 0);
+}
+
+#[test]
+fn fputs_completes_partial_writes_without_flushing() {
+    struct PartialWriter {
+        bytes: Vec<u8>,
+        calls: usize,
+    }
+
+    impl Write for PartialWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            let len = buf.len().min(2);
+            self.bytes.extend_from_slice(&buf[..len]);
+            Ok(len)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("flush called")
+        }
+    }
+
+    let mut writer = PartialWriter {
+        bytes: Vec::new(),
+        calls: 0,
+    };
+
+    assert_eq!(fputs(&[1, 2, 3, 4, 5, 0], &mut writer).unwrap(), 0);
+    assert_eq!(writer.bytes, [1, 2, 3, 4, 5]);
+    assert_eq!(writer.calls, 3);
+}
+
+#[test]
+fn fputs_reports_a_writer_that_makes_no_progress() {
+    struct ZeroWriter;
+
+    impl Write for ZeroWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let error = fputs(&[1], &mut ZeroWriter).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+}
+
+#[test]
+fn fputs_propagates_write_errors_after_partial_output() {
+    struct FailingWriter {
+        bytes: Vec<u8>,
+    }
+
+    impl Write for FailingWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.bytes.is_empty() {
+                self.bytes.extend_from_slice(&buf[..2]);
+                Ok(2)
+            } else {
+                Err(io::Error::other("write failed"))
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = FailingWriter { bytes: Vec::new() };
+    let error = fputs(&[1, 2, 3, 4], &mut writer).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "write failed");
+    assert_eq!(writer.bytes, [1, 2]);
+}
+
+#[test]
+fn fputs_does_not_retry_an_interrupted_write() {
+    struct InterruptedWriter {
+        calls: usize,
+    }
+
+    impl Write for InterruptedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = InterruptedWriter { calls: 0 };
+    let error = fputs(&[1, 2], &mut writer).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    assert_eq!(writer.calls, 1);
+}
+
+#[test]
+fn fputs_accepts_dynamically_sized_writers() {
+    let mut bytes = Vec::new();
+    let writer: &mut dyn Write = &mut bytes;
+
+    assert_eq!(fputs(&[1, 2], writer).unwrap(), 0);
+    assert_eq!(bytes, [1, 2]);
 }
 
 #[test]
@@ -424,4 +673,236 @@ fn fread_accepts_any_bit_pattern_types_with_padding() {
     status.unwrap();
     assert_eq!(buf[0].byte, 1);
     assert_eq!(buf[0].number, u16::from_ne_bytes([3, 4]));
+}
+
+#[test]
+fn fwrite_writes_complete_elements() {
+    let buf = [u16::from_ne_bytes([1, 2]), u16::from_ne_bytes([3, 4])];
+    let mut writer = Vec::new();
+
+    let (count, status) = fwrite(&buf, &mut writer);
+
+    assert_eq!(count, 2);
+    status.unwrap();
+    assert_eq!(writer, [1, 2, 3, 4]);
+}
+
+#[test]
+fn fwrite_accepts_no_uninit_types_that_are_not_pod() {
+    let mut writer = Vec::new();
+
+    let (count, status) = fwrite(&[true, false], &mut writer);
+
+    assert_eq!(count, 2);
+    status.unwrap();
+    assert_eq!(writer, [1, 0]);
+}
+
+#[test]
+fn fwrite_does_not_write_an_empty_buffer() {
+    struct PanickingWriter;
+
+    impl Write for PanickingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("write called for an empty buffer")
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("flush called")
+        }
+    }
+
+    let (count, status) = fwrite::<u8, _>(&[], &mut PanickingWriter);
+
+    assert_eq!(count, 0);
+    status.unwrap();
+}
+
+#[test]
+fn fwrite_does_not_write_zero_sized_elements() {
+    struct PanickingWriter;
+
+    impl Write for PanickingWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("write called for zero-sized elements")
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("flush called")
+        }
+    }
+
+    let (count, status) = fwrite(&[(); 3], &mut PanickingWriter);
+
+    assert_eq!(count, 0);
+    status.unwrap();
+}
+
+#[test]
+fn fwrite_completes_partial_writes_without_flushing() {
+    struct PartialWriter {
+        bytes: Vec<u8>,
+        offered_lengths: Vec<usize>,
+    }
+
+    impl Write for PartialWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.offered_lengths.push(buf.len());
+            let len = buf.len().min(3);
+            self.bytes.extend_from_slice(&buf[..len]);
+            Ok(len)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            panic!("flush called")
+        }
+    }
+
+    let buf = [
+        u16::from_ne_bytes([1, 2]),
+        u16::from_ne_bytes([3, 4]),
+        u16::from_ne_bytes([5, 6]),
+    ];
+    let mut writer = PartialWriter {
+        bytes: Vec::new(),
+        offered_lengths: Vec::new(),
+    };
+
+    let (count, status) = fwrite(&buf, &mut writer);
+
+    assert_eq!(count, 3);
+    status.unwrap();
+    assert_eq!(writer.bytes, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(writer.offered_lengths, [6, 3]);
+}
+
+#[test]
+fn fwrite_reports_a_writer_that_makes_no_progress() {
+    struct ZeroWriter;
+
+    impl Write for ZeroWriter {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let (count, status) = fwrite(&[1_u8], &mut ZeroWriter);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 0);
+    assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+}
+
+#[test]
+fn fwrite_returns_only_complete_elements_when_writing_stalls() {
+    struct PartialThenZero {
+        bytes: Vec<u8>,
+    }
+
+    impl Write for PartialThenZero {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.bytes.is_empty() {
+                self.bytes.extend_from_slice(&buf[..3]);
+                Ok(3)
+            } else {
+                Ok(0)
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buf = [u16::from_ne_bytes([1, 2]), u16::from_ne_bytes([3, 4])];
+    let mut writer = PartialThenZero { bytes: Vec::new() };
+
+    let (count, status) = fwrite(&buf, &mut writer);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 1);
+    assert_eq!(error.kind(), io::ErrorKind::WriteZero);
+    assert_eq!(writer.bytes, [1, 2, 3]);
+}
+
+#[test]
+fn fwrite_returns_an_error_without_discarding_the_element_count() {
+    struct PartialThenFail {
+        bytes: Vec<u8>,
+    }
+
+    impl Write for PartialThenFail {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if self.bytes.is_empty() {
+                self.bytes.extend_from_slice(&buf[..3]);
+                Ok(3)
+            } else {
+                Err(io::Error::other("write failed"))
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buf = [u16::from_ne_bytes([1, 2]), u16::from_ne_bytes([3, 4])];
+    let mut writer = PartialThenFail { bytes: Vec::new() };
+
+    let (count, status) = fwrite(&buf, &mut writer);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 1);
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "write failed");
+    assert_eq!(writer.bytes, [1, 2, 3]);
+}
+
+#[test]
+fn fwrite_does_not_retry_an_interrupted_write() {
+    struct InterruptedWriter {
+        calls: usize,
+    }
+
+    impl Write for InterruptedWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Ok(2)
+            } else if self.calls == 2 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = InterruptedWriter { calls: 0 };
+
+    let (count, status) = fwrite(&[1_u16, 2], &mut writer);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 1);
+    assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+    assert_eq!(writer.calls, 2);
+}
+
+#[test]
+fn fwrite_accepts_dynamically_sized_writers() {
+    let mut bytes = Vec::new();
+    let writer: &mut dyn Write = &mut bytes;
+
+    let (count, status) = fwrite(&[1_u8, 2, 3], writer);
+
+    assert_eq!(count, 3);
+    status.unwrap();
+    assert_eq!(bytes, [1, 2, 3]);
 }

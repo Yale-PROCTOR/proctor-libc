@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read};
+use std::io::{self, BufRead, Read, Write};
 use std::{mem, ptr};
 
 /// Reads the next byte from `r`.
@@ -11,6 +11,45 @@ pub fn fgetc<R: Read + ?Sized>(r: &mut R) -> io::Result<i32> {
         0 => Ok(-1),
         _ => Ok(i32::from(byte[0])),
     }
+}
+
+/// Writes `c`, converted to an unsigned byte, to `w`.
+///
+/// Returns the written byte as an unsigned value or an I/O error.
+pub fn fputc<W: Write + ?Sized>(c: i32, w: &mut W) -> io::Result<i32> {
+    let byte = c as u8;
+
+    if w.write(&[byte])? == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::WriteZero,
+            "failed to write byte",
+        ));
+    }
+
+    Ok(i32::from(byte))
+}
+
+/// Writes the bytes in `buf` preceding the first null byte to `w`.
+///
+/// If `buf` has no null byte, writes the entire slice. Returns zero on success
+/// or an I/O error.
+pub fn fputs<W: Write + ?Sized>(buf: &[i8], w: &mut W) -> io::Result<i32> {
+    let len = buf.iter().position(|&byte| byte == 0).unwrap_or(buf.len());
+    let mut bytes: &[u8] = bytemuck::cast_slice(&buf[..len]);
+
+    while !bytes.is_empty() {
+        match w.write(bytes)? {
+            0 => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write string",
+                ));
+            }
+            written => bytes = &bytes[written..],
+        }
+    }
+
+    Ok(0)
 }
 
 /// Reads a line from `r` into `buf`, including the newline and a trailing null byte.
@@ -102,6 +141,40 @@ pub fn fread<T: bytemuck::AnyBitPattern, R: BufRead + ?Sized>(
     }
 
     (bytes_read / element_size, Ok(()))
+}
+
+/// Writes binary output from `buf` to `w`.
+///
+/// Returns the number of complete elements written and any I/O error.
+pub fn fwrite<T: bytemuck::NoUninit, W: Write + ?Sized>(
+    buf: &[T],
+    w: &mut W,
+) -> (usize, io::Result<()>) {
+    let element_size = mem::size_of::<T>();
+    if element_size == 0 || buf.is_empty() {
+        return (0, Ok(()));
+    }
+
+    let bytes: &[u8] = bytemuck::cast_slice(buf);
+    let mut bytes_written = 0;
+
+    while bytes_written < bytes.len() {
+        match w.write(&bytes[bytes_written..]) {
+            Ok(0) => {
+                return (
+                    bytes_written / element_size,
+                    Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write buffer",
+                    )),
+                );
+            }
+            Ok(written) => bytes_written += written,
+            Err(error) => return (bytes_written / element_size, Err(error)),
+        }
+    }
+
+    (buf.len(), Ok(()))
 }
 
 #[cfg(test)]
