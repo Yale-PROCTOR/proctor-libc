@@ -10,6 +10,9 @@
   within its bound, a Rust port taking an `i8` slice must assume that the slice
   contains `0`. A slice without `0` is UB and is subject to the preceding rule.
 * Prioritize preserving the C return when choosing a signature.
+* Map C types to Rust as follows: `char` to `i8`, `int` to `i32`, `long` to
+  `i64`, `float` to `f32`, `double` to `f64`, `long double` to `f128::f128`,
+  and `size_t` to `usize`.
 * Each function should have good performance. For multi-byte operations, process
   as much data as possible at once instead of repeatedly processing one byte.
 * After editing the code, run `cargo fmt` and `cargo clippy --workspace
@@ -18,10 +21,13 @@
   `src/stdio/mod.rs`, and place relevant test cases under `src/stdio/tests.rs`.
 * Place functions corresponding to \<stdlib.h\> functions under
   `src/stdlib/mod.rs`, and place relevant test cases under `src/stdlib/tests.rs`.
+* Place functions corresponding to \<string.h\> functions under
+  `src/string/mod.rs`, and place relevant test cases under `src/string/tests.rs`.
 * Each test case should not exhibit any actual file-system update.
 * Keep function docstrings self-contained and concise: use a one-line summary
   plus Rust-specific return and error details, without restating libc behavior
-  or referring to another function's docstring.
+  or referring to another function's docstring. If the return value is trivial
+  (the same as libc, with no error handling), the one-line summary is enough.
 
 # Think Before Coding
 
