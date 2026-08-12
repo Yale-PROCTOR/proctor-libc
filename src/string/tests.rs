@@ -1,4 +1,4 @@
-use super::{strcmp, strlen, strncmp};
+use super::{strcat, strcmp, strlen, strncat, strncmp};
 
 fn i8s(bytes: &[u8]) -> &[i8] {
     bytemuck::cast_slice(bytes)
@@ -118,4 +118,108 @@ fn strncmp_with_zero_limit_compares_no_bytes() {
 fn strncmp_compares_bytes_as_unsigned() {
     assert_eq!(strncmp(&[-1], &[1], 1), 254);
     assert_eq!(strncmp(&[1], &[-1], 1), -254);
+}
+
+#[test]
+fn strcat_appends_the_source_and_its_null_byte() {
+    let mut s1 = i8s(b"hello\0unchanged").to_vec();
+
+    let result = strcat(&mut s1, i8s(b" world\0ignored"));
+
+    assert_eq!(result, i8s(b"hello world\0ged"));
+}
+
+#[test]
+fn strcat_handles_empty_strings() {
+    let mut empty_destination = i8s(b"\0tail").to_vec();
+    assert_eq!(
+        strcat(&mut empty_destination, i8s(b"abc\0")),
+        i8s(b"abc\0l")
+    );
+
+    let mut empty_source = i8s(b"abc\0tail").to_vec();
+    assert_eq!(
+        strcat(&mut empty_source, i8s(b"\0ignored")),
+        i8s(b"abc\0tail")
+    );
+}
+
+#[test]
+fn strcat_returns_the_complete_destination_slice() {
+    let mut s1 = i8s(b"a\0tail").to_vec();
+    let pointer = s1.as_ptr();
+    let length = s1.len();
+
+    let result = strcat(&mut s1, i8s(b"b\0"));
+
+    assert_eq!(result.as_ptr(), pointer);
+    assert_eq!(result.len(), length);
+}
+
+#[test]
+fn strcat_finds_null_bytes_at_word_boundaries() {
+    for s1_len in 0..=size_of::<usize>() * 2 {
+        for s2_len in 0..=size_of::<usize>() * 2 {
+            let mut s1 = vec![1; s1_len];
+            s1.push(0);
+            s1.resize(s1_len + s2_len + 2, 3);
+            let mut s2 = vec![2; s2_len];
+            s2.extend_from_slice(&[0, 4]);
+
+            let result = strcat(&mut s1, &s2);
+
+            assert_eq!(&result[..s1_len], vec![1; s1_len]);
+            assert_eq!(&result[s1_len..s1_len + s2_len], vec![2; s2_len]);
+            assert_eq!(result[s1_len + s2_len], 0);
+            assert_eq!(result[s1_len + s2_len + 1], 3);
+        }
+    }
+}
+
+#[test]
+fn strncat_appends_at_most_n_bytes_and_a_null_byte() {
+    let mut s1 = i8s(b"abc\0unchanged").to_vec();
+
+    let result = strncat(&mut s1, i8s(b"defghi\0"), 3);
+
+    assert_eq!(result, i8s(b"abcdef\0hanged"));
+}
+
+#[test]
+fn strncat_stops_at_the_source_null_byte() {
+    let mut s1 = i8s(b"a\0tail").to_vec();
+
+    let result = strncat(&mut s1, i8s(b"b\0"), usize::MAX);
+
+    assert_eq!(result, i8s(b"ab\0ail"));
+}
+
+#[test]
+fn strncat_accepts_n_bytes_without_a_source_null_byte() {
+    let mut s1 = i8s(b"a\0tail").to_vec();
+
+    let result = strncat(&mut s1, i8s(b"bc"), 2);
+
+    assert_eq!(result, i8s(b"abc\0il"));
+}
+
+#[test]
+fn strncat_with_zero_limit_only_rewrites_the_destination_null_byte() {
+    let mut s1 = i8s(b"a\0tail").to_vec();
+
+    let result = strncat(&mut s1, &[], 0);
+
+    assert_eq!(result, i8s(b"a\0tail"));
+}
+
+#[test]
+fn strncat_returns_the_complete_destination_slice() {
+    let mut s1 = i8s(b"a\0tail").to_vec();
+    let pointer = s1.as_ptr();
+    let length = s1.len();
+
+    let result = strncat(&mut s1, i8s(b"b\0"), 1);
+
+    assert_eq!(result.as_ptr(), pointer);
+    assert_eq!(result.len(), length);
 }
