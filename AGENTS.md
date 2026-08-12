@@ -25,6 +25,7 @@
   `src/string/mod.rs`, and place relevant test cases under `src/string/tests.rs`.
 * Place functions corresponding to \<strings.h\> functions under
   `src/strings/mod.rs`, and place relevant test cases under `src/strings/tests.rs`.
+* Whenever you implement a new public function, re-export it from `src/lib.rs`.
 * Each test case should not exhibit any actual file-system update.
 * Keep function docstrings self-contained and concise: use a one-line summary
   plus Rust-specific return and error details, without restating libc behavior
