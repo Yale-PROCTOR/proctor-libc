@@ -7,27 +7,32 @@ use super::{
 
 const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
 
+fn unwrap_stdio<T>((value, status): (T, io::Result<()>)) -> T {
+    status.unwrap();
+    value
+}
+
 #[test]
 fn standard_stream_child() {
     match std::env::var(STANDARD_STREAM_CHILD).as_deref() {
         Err(std::env::VarError::NotPresent) => {}
         Ok("getchar") => {
-            assert_eq!(getchar().unwrap(), 0);
-            assert_eq!(getchar().unwrap(), 127);
-            assert_eq!(getchar().unwrap(), 128);
-            assert_eq!(getchar().unwrap(), 255);
-            assert_eq!(getchar().unwrap(), -1);
-            assert_eq!(getchar().unwrap(), -1);
+            assert_eq!(unwrap_stdio(getchar()), 0);
+            assert_eq!(unwrap_stdio(getchar()), 127);
+            assert_eq!(unwrap_stdio(getchar()), 128);
+            assert_eq!(unwrap_stdio(getchar()), 255);
+            assert_eq!(unwrap_stdio(getchar()), -1);
+            assert_eq!(unwrap_stdio(getchar()), -1);
         }
         Ok("putchar") => {
-            assert_eq!(putchar(-1).unwrap(), 255);
-            assert_eq!(putchar(256).unwrap(), 0);
-            assert_eq!(putchar(65).unwrap(), 65);
+            assert_eq!(unwrap_stdio(putchar(-1)), 255);
+            assert_eq!(unwrap_stdio(putchar(256)), 0);
+            assert_eq!(unwrap_stdio(putchar(65)), 65);
         }
         Ok("puts") => {
-            assert_eq!(puts(&[1, 2, 0, 3]).unwrap(), 0);
-            assert_eq!(puts(&[]).unwrap(), 0);
-            assert_eq!(puts(&[-1, -128]).unwrap(), 0);
+            assert_eq!(unwrap_stdio(puts(&[1, 2, 0, 3])), 0);
+            assert_eq!(unwrap_stdio(puts(&[])), 0);
+            assert_eq!(unwrap_stdio(puts(&[-1, -128])), 0);
         }
         Ok(mode) => panic!("unknown standard-stream child mode: {mode}"),
         Err(error) => panic!("invalid standard-stream child mode: {error}"),
@@ -93,11 +98,11 @@ fn puts_stops_at_null_and_appends_a_newline() {
 fn fseek_repositions_from_the_start_current_position_and_end() {
     let mut stream = Cursor::new([0; 8]);
 
-    assert_eq!(fseek(&mut stream, SeekFrom::Start(3)).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fseek(&mut stream, SeekFrom::Start(3))), 0);
     assert_eq!(stream.position(), 3);
-    assert_eq!(fseek(&mut stream, SeekFrom::Current(2)).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fseek(&mut stream, SeekFrom::Current(2))), 0);
     assert_eq!(stream.position(), 5);
-    assert_eq!(fseek(&mut stream, SeekFrom::End(-1)).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fseek(&mut stream, SeekFrom::End(-1))), 0);
     assert_eq!(stream.position(), 7);
 }
 
@@ -105,8 +110,8 @@ fn fseek_repositions_from_the_start_current_position_and_end() {
 fn fseek_allows_positions_beyond_the_end() {
     let mut stream = Cursor::new([0; 8]);
 
-    assert_eq!(fseek(&mut stream, SeekFrom::Start(12)).unwrap(), 0);
-    assert_eq!(ftell(&mut stream).unwrap(), 12);
+    assert_eq!(unwrap_stdio(fseek(&mut stream, SeekFrom::Start(12))), 0);
+    assert_eq!(unwrap_stdio(ftell(&mut stream)), 12);
 }
 
 #[test]
@@ -114,7 +119,7 @@ fn ftell_returns_the_current_position_without_changing_it() {
     let mut stream = Cursor::new([0; 8]);
     stream.set_position(5);
 
-    assert_eq!(ftell(&mut stream).unwrap(), 5);
+    assert_eq!(unwrap_stdio(ftell(&mut stream)), 5);
     assert_eq!(stream.position(), 5);
 }
 
@@ -133,10 +138,10 @@ fn seek_functions_accept_dynamically_sized_streams() {
     let mut bytes = Cursor::new([0; 8]);
     let stream: &mut dyn Seek = &mut bytes;
 
-    assert_eq!(fseek(stream, SeekFrom::Start(6)).unwrap(), 0);
-    assert_eq!(ftell(stream).unwrap(), 6);
+    assert_eq!(unwrap_stdio(fseek(stream, SeekFrom::Start(6))), 0);
+    assert_eq!(unwrap_stdio(ftell(stream)), 6);
     rewind(stream).unwrap();
-    assert_eq!(ftell(stream).unwrap(), 0);
+    assert_eq!(unwrap_stdio(ftell(stream)), 0);
 }
 
 #[test]
@@ -149,9 +154,15 @@ fn seek_functions_propagate_seek_errors() {
         }
     }
 
+    let (fseek_value, fseek_status) = fseek(&mut FailingSeek, SeekFrom::Start(1));
+    let (ftell_value, ftell_status) = ftell(&mut FailingSeek);
+
+    assert_eq!(fseek_value, -1);
+    assert_eq!(ftell_value, -1);
+
     for error in [
-        fseek(&mut FailingSeek, SeekFrom::Start(1)).unwrap_err(),
-        ftell(&mut FailingSeek).unwrap_err(),
+        fseek_status.unwrap_err(),
+        ftell_status.unwrap_err(),
         rewind(&mut FailingSeek).unwrap_err(),
     ] {
         assert_eq!(error.kind(), io::ErrorKind::Other);
@@ -170,34 +181,37 @@ fn fseek_and_ftell_accept_i64_max_and_reject_larger_positions() {
     }
 
     let mut maximum = PositionSeek(i64::MAX as u64);
-    assert_eq!(fseek(&mut maximum, SeekFrom::Start(0)).unwrap(), 0);
-    assert_eq!(ftell(&mut maximum).unwrap(), i64::MAX);
+    assert_eq!(unwrap_stdio(fseek(&mut maximum, SeekFrom::Start(0))), 0);
+    assert_eq!(unwrap_stdio(ftell(&mut maximum)), i64::MAX);
 
     let mut too_large = PositionSeek(i64::MAX as u64 + 1);
-    let fseek_error = fseek(&mut too_large, SeekFrom::Start(0)).unwrap_err();
-    let ftell_error = ftell(&mut too_large).unwrap_err();
+    let (fseek_value, fseek_status) = fseek(&mut too_large, SeekFrom::Start(0));
+    let (ftell_value, ftell_status) = ftell(&mut too_large);
 
-    assert_eq!(fseek_error.kind(), io::ErrorKind::InvalidData);
-    assert_eq!(ftell_error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(fseek_value, -1);
+    assert_eq!(ftell_value, -1);
+
+    assert_eq!(fseek_status.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(ftell_status.unwrap_err().kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]
 fn reads_bytes_as_unsigned_integers_and_advances_the_reader() {
     let mut reader = Cursor::new([0, 127, 128, 255]);
 
-    assert_eq!(fgetc(&mut reader).unwrap(), 0);
-    assert_eq!(fgetc(&mut reader).unwrap(), 127);
-    assert_eq!(fgetc(&mut reader).unwrap(), 128);
-    assert_eq!(fgetc(&mut reader).unwrap(), 255);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), 0);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), 127);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), 128);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), 255);
 }
 
 #[test]
 fn returns_minus_one_at_end_of_file() {
     let mut reader = Cursor::new([42]);
 
-    assert_eq!(fgetc(&mut reader).unwrap(), 42);
-    assert_eq!(fgetc(&mut reader).unwrap(), -1);
-    assert_eq!(fgetc(&mut reader).unwrap(), -1);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), 42);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), -1);
+    assert_eq!(unwrap_stdio(fgetc(&mut reader)), -1);
 }
 
 #[test]
@@ -205,7 +219,7 @@ fn accepts_dynamically_sized_readers() {
     let mut bytes = Cursor::new([42]);
     let reader: &mut dyn Read = &mut bytes;
 
-    assert_eq!(fgetc(reader).unwrap(), 42);
+    assert_eq!(unwrap_stdio(fgetc(reader)), 42);
 }
 
 #[test]
@@ -218,8 +232,10 @@ fn propagates_read_errors() {
         }
     }
 
-    let error = fgetc(&mut FailingReader).unwrap_err();
+    let (value, status) = fgetc(&mut FailingReader);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "read failed");
 }
@@ -228,10 +244,10 @@ fn propagates_read_errors() {
 fn fputc_writes_bytes_and_returns_their_unsigned_values() {
     let mut writer = Vec::new();
 
-    assert_eq!(fputc(0, &mut writer).unwrap(), 0);
-    assert_eq!(fputc(127, &mut writer).unwrap(), 127);
-    assert_eq!(fputc(128, &mut writer).unwrap(), 128);
-    assert_eq!(fputc(255, &mut writer).unwrap(), 255);
+    assert_eq!(unwrap_stdio(fputc(0, &mut writer)), 0);
+    assert_eq!(unwrap_stdio(fputc(127, &mut writer)), 127);
+    assert_eq!(unwrap_stdio(fputc(128, &mut writer)), 128);
+    assert_eq!(unwrap_stdio(fputc(255, &mut writer)), 255);
     assert_eq!(writer, [0, 127, 128, 255]);
 }
 
@@ -239,9 +255,9 @@ fn fputc_writes_bytes_and_returns_their_unsigned_values() {
 fn fputc_converts_the_input_to_an_unsigned_byte() {
     let mut writer = Vec::new();
 
-    assert_eq!(fputc(-1, &mut writer).unwrap(), 255);
-    assert_eq!(fputc(256, &mut writer).unwrap(), 0);
-    assert_eq!(fputc(511, &mut writer).unwrap(), 255);
+    assert_eq!(unwrap_stdio(fputc(-1, &mut writer)), 255);
+    assert_eq!(unwrap_stdio(fputc(256, &mut writer)), 0);
+    assert_eq!(unwrap_stdio(fputc(511, &mut writer)), 255);
     assert_eq!(writer, [255, 0, 255]);
 }
 
@@ -250,7 +266,7 @@ fn fputc_accepts_dynamically_sized_writers() {
     let mut bytes = Vec::new();
     let writer: &mut dyn Write = &mut bytes;
 
-    assert_eq!(fputc(42, writer).unwrap(), 42);
+    assert_eq!(unwrap_stdio(fputc(42, writer)), 42);
     assert_eq!(bytes, [42]);
 }
 
@@ -268,8 +284,10 @@ fn fputc_reports_a_writer_that_makes_no_progress() {
         }
     }
 
-    let error = fputc(42, &mut ZeroWriter).unwrap_err();
+    let (value, status) = fputc(42, &mut ZeroWriter);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::WriteZero);
 }
 
@@ -287,8 +305,10 @@ fn fputc_propagates_write_errors() {
         }
     }
 
-    let error = fputc(42, &mut FailingWriter).unwrap_err();
+    let (value, status) = fputc(42, &mut FailingWriter);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "write failed");
 }
@@ -315,8 +335,10 @@ fn fputc_does_not_retry_an_interrupted_write() {
     }
 
     let mut writer = InterruptedWriter { calls: 0 };
-    let error = fputc(42, &mut writer).unwrap_err();
+    let (value, status) = fputc(42, &mut writer);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     assert_eq!(writer.calls, 1);
 }
@@ -326,7 +348,7 @@ fn fputs_writes_bytes_before_the_first_null_and_returns_zero() {
     let mut writer = Vec::new();
 
     assert_eq!(
-        fputs(&[b'a' as i8, -128, -1, 0, b'b' as i8], &mut writer).unwrap(),
+        unwrap_stdio(fputs(&[b'a' as i8, -128, -1, 0, b'b' as i8], &mut writer)),
         0
     );
     assert_eq!(writer, [b'a', 128, 255]);
@@ -336,7 +358,10 @@ fn fputs_writes_bytes_before_the_first_null_and_returns_zero() {
 fn fputs_writes_the_entire_slice_when_it_has_no_null() {
     let mut writer = Vec::new();
 
-    assert_eq!(fputs(&[b'a' as i8, b'b' as i8], &mut writer).unwrap(), 0);
+    assert_eq!(
+        unwrap_stdio(fputs(&[b'a' as i8, b'b' as i8], &mut writer)),
+        0
+    );
     assert_eq!(writer, b"ab");
 }
 
@@ -354,8 +379,11 @@ fn fputs_does_not_write_an_empty_string() {
         }
     }
 
-    assert_eq!(fputs(&[], &mut PanickingWriter).unwrap(), 0);
-    assert_eq!(fputs(&[0, b'a' as i8], &mut PanickingWriter).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fputs(&[], &mut PanickingWriter)), 0);
+    assert_eq!(
+        unwrap_stdio(fputs(&[0, b'a' as i8], &mut PanickingWriter)),
+        0
+    );
 }
 
 #[test]
@@ -383,7 +411,7 @@ fn fputs_completes_partial_writes_without_flushing() {
         calls: 0,
     };
 
-    assert_eq!(fputs(&[1, 2, 3, 4, 5, 0], &mut writer).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fputs(&[1, 2, 3, 4, 5, 0], &mut writer)), 0);
     assert_eq!(writer.bytes, [1, 2, 3, 4, 5]);
     assert_eq!(writer.calls, 3);
 }
@@ -402,8 +430,10 @@ fn fputs_reports_a_writer_that_makes_no_progress() {
         }
     }
 
-    let error = fputs(&[1], &mut ZeroWriter).unwrap_err();
+    let (value, status) = fputs(&[1], &mut ZeroWriter);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::WriteZero);
 }
 
@@ -429,8 +459,10 @@ fn fputs_propagates_write_errors_after_partial_output() {
     }
 
     let mut writer = FailingWriter { bytes: Vec::new() };
-    let error = fputs(&[1, 2, 3, 4], &mut writer).unwrap_err();
+    let (value, status) = fputs(&[1, 2, 3, 4], &mut writer);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "write failed");
     assert_eq!(writer.bytes, [1, 2]);
@@ -458,8 +490,10 @@ fn fputs_does_not_retry_an_interrupted_write() {
     }
 
     let mut writer = InterruptedWriter { calls: 0 };
-    let error = fputs(&[1, 2], &mut writer).unwrap_err();
+    let (value, status) = fputs(&[1, 2], &mut writer);
+    let error = status.unwrap_err();
 
+    assert_eq!(value, -1);
     assert_eq!(error.kind(), io::ErrorKind::Interrupted);
     assert_eq!(writer.calls, 1);
 }
@@ -469,7 +503,7 @@ fn fputs_accepts_dynamically_sized_writers() {
     let mut bytes = Vec::new();
     let writer: &mut dyn Write = &mut bytes;
 
-    assert_eq!(fputs(&[1, 2], writer).unwrap(), 0);
+    assert_eq!(unwrap_stdio(fputs(&[1, 2], writer)), 0);
     assert_eq!(bytes, [1, 2]);
 }
 
@@ -478,7 +512,7 @@ fn fgets_reads_through_newline_and_returns_the_entire_buffer() {
     let mut reader = Cursor::new(b"first line\nsecond line");
     let mut buf = [99; 16];
 
-    let result = fgets(&mut buf, &mut reader).unwrap().unwrap();
+    let result = unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap();
 
     assert_eq!(result.len(), 16);
     assert_eq!(
@@ -497,11 +531,11 @@ fn fgets_stops_when_the_buffer_is_full_without_overreading() {
     let mut second = [99; 4];
 
     assert_eq!(
-        fgets(&mut first, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut first, &mut reader)).unwrap(),
         &[b'a' as i8, b'b' as i8, b'c' as i8, 0]
     );
     assert_eq!(
-        fgets(&mut second, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut second, &mut reader)).unwrap(),
         &[b'd' as i8, b'e' as i8, b'f' as i8, 0]
     );
 }
@@ -513,11 +547,11 @@ fn fgets_leaves_a_newline_beyond_the_buffer_limit_for_the_next_call() {
     let mut second = [99; 4];
 
     assert_eq!(
-        fgets(&mut first, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut first, &mut reader)).unwrap(),
         &[b'a' as i8, b'b' as i8, b'c' as i8, 0]
     );
     assert_eq!(
-        fgets(&mut second, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut second, &mut reader)).unwrap(),
         &[b'\n' as i8, 0, 99, 99]
     );
     assert_eq!(reader.fill_buf().unwrap(), b"def");
@@ -529,7 +563,7 @@ fn fgets_reads_across_buffered_chunks() {
     let mut buf = [99; 8];
 
     assert_eq!(
-        fgets(&mut buf, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap(),
         &[
             b'a' as i8,
             b'b' as i8,
@@ -549,7 +583,7 @@ fn fgets_returns_none_at_eof_without_modifying_the_buffer() {
     let mut reader = Cursor::new([]);
     let mut buf = [99; 4];
 
-    assert!(fgets(&mut buf, &mut reader).unwrap().is_none());
+    assert!(unwrap_stdio(fgets(&mut buf, &mut reader)).is_none());
     assert_eq!(buf, [99; 4]);
 }
 
@@ -559,7 +593,7 @@ fn fgets_returns_data_when_eof_follows_bytes() {
     let mut buf = [99; 5];
 
     assert_eq!(
-        fgets(&mut buf, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap(),
         &[b'a' as i8, b'b' as i8, b'c' as i8, 0, 99]
     );
 }
@@ -570,7 +604,7 @@ fn fgets_treats_null_and_high_bytes_as_input() {
     let mut buf = [99; 6];
 
     assert_eq!(
-        fgets(&mut buf, &mut reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap(),
         &[0, -128, -1, b'\n' as i8, 0, 99]
     );
     assert_eq!(reader.fill_buf().unwrap(), b"x");
@@ -581,15 +615,17 @@ fn fgets_with_one_byte_buffer_writes_only_null_without_reading() {
     let mut reader = Cursor::new(b"abc");
     let mut buf = [99];
 
-    assert_eq!(fgets(&mut buf, &mut reader).unwrap().unwrap(), &[0]);
+    assert_eq!(unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap(), &[0]);
     assert_eq!(reader.position(), 0);
 }
 
 #[test]
 fn fgets_rejects_an_empty_buffer_without_reading() {
     let mut reader = Cursor::new(b"abc");
-    let error = fgets(&mut [], &mut reader).unwrap_err();
+    let (value, status) = fgets(&mut [], &mut reader);
+    let error = status.unwrap_err();
 
+    assert!(value.is_none());
     assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(reader.position(), 0);
 }
@@ -601,7 +637,7 @@ fn fgets_accepts_dynamically_sized_buffered_readers() {
     let mut buf = [99; 5];
 
     assert_eq!(
-        fgets(&mut buf, reader).unwrap().unwrap(),
+        unwrap_stdio(fgets(&mut buf, reader)).unwrap(),
         &[b'a' as i8, b'b' as i8, b'c' as i8, b'\n' as i8, 0]
     );
 }
@@ -625,8 +661,10 @@ fn fgets_propagates_buffered_read_errors() {
     }
 
     let mut buf = [99; 4];
-    let error = fgets(&mut buf, &mut FailingReader).unwrap_err();
+    let (value, status) = fgets(&mut buf, &mut FailingReader);
+    let error = status.unwrap_err();
 
+    assert!(value.is_none());
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "read failed");
 }
@@ -660,8 +698,10 @@ fn fgets_propagates_an_error_after_copying_available_bytes() {
 
     let mut reader = PartialThenFail { consumed: false };
     let mut buf = [99; 4];
-    let error = fgets(&mut buf, &mut reader).unwrap_err();
+    let (value, status) = fgets(&mut buf, &mut reader);
+    let error = status.unwrap_err();
 
+    assert!(value.is_none());
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "read failed");
     assert_eq!(buf, [b'a' as i8, b'b' as i8, 99, 99]);
