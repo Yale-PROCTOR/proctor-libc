@@ -85,6 +85,21 @@ pub fn strncmp(s1: &[i8], s2: &[i8], n: usize) -> i32 {
     compare(s1, s2, n)
 }
 
+/// Copies the null-terminated byte string `s2`, including its null byte, into `s1`.
+pub fn strcpy<'s>(s1: &'s mut [i8], s2: &[i8]) -> &'s mut [i8] {
+    let s2_len = strlen(s2);
+    s1[..=s2_len].copy_from_slice(&s2[..=s2_len]);
+    s1
+}
+
+/// Copies at most `n` bytes from `s2` into `s1`, padding with null bytes when needed.
+pub fn strncpy<'s>(s1: &'s mut [i8], s2: &[i8], n: usize) -> &'s mut [i8] {
+    let copied = find_null(s2, n).unwrap_or(n);
+    s1[..copied].copy_from_slice(&s2[..copied]);
+    s1[copied..n].fill(0);
+    s1
+}
+
 /// Appends the null-terminated byte string `s2` to `s1`.
 pub fn strcat<'s>(s1: &'s mut [i8], s2: &[i8]) -> &'s mut [i8] {
     let s1_len = strlen(s1);
