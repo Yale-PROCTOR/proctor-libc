@@ -9,6 +9,27 @@ fn has_null_byte(word: usize) -> bool {
     word.wrapping_sub(LOW_BITS) & !word & HIGH_BITS != 0
 }
 
+fn find_memory_byte(buf: &[u8], byte: u8) -> Option<usize> {
+    let repeated_byte = LOW_BITS * usize::from(byte);
+    let mut chunks = buf.chunks_exact(WORD_BYTES);
+
+    for (index, chunk) in chunks.by_ref().enumerate() {
+        let word = usize::from_ne_bytes(chunk.try_into().unwrap());
+        if has_null_byte(word ^ repeated_byte) {
+            return Some(
+                index * WORD_BYTES + chunk.iter().position(|&current| current == byte).unwrap(),
+            );
+        }
+    }
+
+    let remainder_start = buf.len() - chunks.remainder().len();
+    chunks
+        .remainder()
+        .iter()
+        .position(|&current| current == byte)
+        .map(|index| remainder_start + index)
+}
+
 fn find_byte(s: &[i8], byte: i8) -> Option<usize> {
     let bytes: &[u8] = bytemuck::cast_slice(s);
     let byte = byte as u8;
@@ -141,6 +162,16 @@ fn compare(s1: &[i8], s2: &[i8], n: usize) -> i32 {
     }
 
     0
+}
+
+/// Finds `c`, converted to `u8`, in `buf` and returns its suffix, or `None` if not found.
+pub fn memchr(buf: &[u8], c: i32) -> Option<&[u8]> {
+    find_memory_byte(buf, c as u8).map(|index| &buf[index..])
+}
+
+/// Finds `c`, converted to `u8`, in `buf` and returns its mutable suffix, or `None` if not found.
+pub fn memchr_mut(buf: &mut [u8], c: i32) -> Option<&mut [u8]> {
+    find_memory_byte(buf, c as u8).map(|index| &mut buf[index..])
 }
 
 /// Compares the first `n` bytes of two memory regions.

@@ -1,6 +1,6 @@
 use super::{
-    memcmp, strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup, strlen, strncat, strncmp,
-    strncpy, strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,
+    memchr, memchr_mut, memcmp, strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup,
+    strlen, strncat, strncmp, strncpy, strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,
 };
 
 fn i8s(bytes: &[u8]) -> &[i8] {
@@ -94,6 +94,68 @@ fn strndup_finds_null_bytes_at_each_word_offset() {
         assert_eq!(result[length], 0);
         assert_eq!(result.len(), length + 1);
     }
+}
+
+#[test]
+fn memchr_returns_the_suffix_at_the_first_match() {
+    assert_eq!(memchr(b"abca", b'a'.into()), Some(&b"abca"[..]));
+    assert_eq!(memchr(b"abca", b'c'.into()), Some(&b"ca"[..]));
+}
+
+#[test]
+fn memchr_returns_none_when_the_byte_is_not_found() {
+    assert_eq!(memchr(b"abc", b'd'.into()), None);
+    assert_eq!(memchr(b"", 0), None);
+}
+
+#[test]
+fn memchr_searches_null_bytes_and_bytes_after_them() {
+    assert_eq!(memchr(b"ab\0cd", 0), Some(&b"\0cd"[..]));
+    assert_eq!(memchr(b"ab\0cd", b'd'.into()), Some(&b"d"[..]));
+}
+
+#[test]
+fn memchr_converts_c_to_u8() {
+    assert_eq!(memchr(&[255, 1], -1), Some(&[255, 1][..]));
+    assert_eq!(memchr(&[1, 2], 257), Some(&[1, 2][..]));
+}
+
+#[test]
+fn memchr_finds_bytes_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut buf = vec![1; expected];
+        buf.extend_from_slice(&[2, 3]);
+
+        let result = memchr(&buf, 2).unwrap();
+
+        assert_eq!(result.as_ptr(), buf[expected..].as_ptr());
+        assert_eq!(result, &buf[expected..]);
+    }
+}
+
+#[test]
+fn memchr_returns_none_for_complete_words_without_a_match() {
+    let buf = vec![1; size_of::<usize>() * 3];
+
+    assert_eq!(memchr(&buf, 2), None);
+}
+
+#[test]
+fn memchr_mut_returns_a_mutable_suffix() {
+    let mut buf = b"abc".to_vec();
+
+    let result = memchr_mut(&mut buf, b'b'.into()).unwrap();
+    result[0] = b'B';
+
+    assert_eq!(buf, b"aBc");
+}
+
+#[test]
+fn memchr_mut_returns_none_without_modifying_buf() {
+    let mut buf = b"abc".to_vec();
+
+    assert_eq!(memchr_mut(&mut buf, b'd'.into()), None);
+    assert_eq!(buf, b"abc");
 }
 
 #[test]
