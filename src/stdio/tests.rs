@@ -1,6 +1,91 @@
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::process::{Command, Stdio};
 
-use super::{fgetc, fgets, fputc, fputs, fread, fwrite};
+use super::{fgetc, fgets, fputc, fputs, fread, fwrite, getchar, putchar, puts};
+
+const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
+
+#[test]
+fn standard_stream_child() {
+    match std::env::var(STANDARD_STREAM_CHILD).as_deref() {
+        Err(std::env::VarError::NotPresent) => {}
+        Ok("getchar") => {
+            assert_eq!(getchar().unwrap(), 0);
+            assert_eq!(getchar().unwrap(), 127);
+            assert_eq!(getchar().unwrap(), 128);
+            assert_eq!(getchar().unwrap(), 255);
+            assert_eq!(getchar().unwrap(), -1);
+            assert_eq!(getchar().unwrap(), -1);
+        }
+        Ok("putchar") => {
+            assert_eq!(putchar(-1).unwrap(), 255);
+            assert_eq!(putchar(256).unwrap(), 0);
+            assert_eq!(putchar(65).unwrap(), 65);
+        }
+        Ok("puts") => {
+            assert_eq!(puts(&[1, 2, 0, 3]).unwrap(), 0);
+            assert_eq!(puts(&[]).unwrap(), 0);
+            assert_eq!(puts(&[-1, -128]).unwrap(), 0);
+        }
+        Ok(mode) => panic!("unknown standard-stream child mode: {mode}"),
+        Err(error) => panic!("invalid standard-stream child mode: {error}"),
+    }
+}
+
+fn standard_stream_command(mode: &str) -> Command {
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "stdio::tests::standard_stream_child",
+            "--nocapture",
+        ])
+        .env(STANDARD_STREAM_CHILD, mode);
+    command
+}
+
+fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+#[test]
+fn getchar_reads_unsigned_bytes_and_reports_end_of_file() {
+    let mut child = standard_stream_command("getchar")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&[0, 127, 128, 255])
+        .unwrap();
+
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn putchar_writes_and_returns_the_input_converted_to_an_unsigned_byte() {
+    let output = standard_stream_command("putchar").output().unwrap();
+
+    assert!(output.status.success());
+    assert!(contains_subslice(&output.stdout, &[255, 0, 65]));
+}
+
+#[test]
+fn puts_stops_at_null_and_appends_a_newline() {
+    let output = standard_stream_command("puts").output().unwrap();
+
+    assert!(output.status.success());
+    assert!(contains_subslice(
+        &output.stdout,
+        &[1, 2, b'\n', b'\n', 255, 128, b'\n']
+    ));
+}
 
 #[test]
 fn reads_bytes_as_unsigned_integers_and_advances_the_reader() {

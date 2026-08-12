@@ -52,6 +52,37 @@ pub fn fputs<W: Write + ?Sized>(buf: &[i8], w: &mut W) -> io::Result<i32> {
     Ok(0)
 }
 
+/// Reads the next byte from standard input.
+///
+/// Returns the byte as an unsigned value, `-1` at end-of-file, or an I/O error.
+pub fn getchar() -> io::Result<i32> {
+    let stdin = io::stdin();
+    fgetc(&mut stdin.lock())
+}
+
+/// Writes `c`, converted to an unsigned byte, to standard output.
+///
+/// Returns the written byte as an unsigned value or an I/O error.
+pub fn putchar(c: i32) -> io::Result<i32> {
+    let stdout = io::stdout();
+    fputc(c, &mut stdout.lock())
+}
+
+/// Writes the bytes in `buf` preceding the first null byte, followed by a
+/// newline, to standard output.
+///
+/// If `buf` has no null byte, writes the entire slice. Returns zero on success
+/// or an I/O error.
+pub fn puts(buf: &[i8]) -> io::Result<i32> {
+    let stdout = io::stdout();
+    let mut stdout = stdout.lock();
+
+    fputs(buf, &mut stdout)?;
+    fputc(i32::from(b'\n'), &mut stdout)?;
+
+    Ok(0)
+}
+
 /// Reads a line from `r` into `buf`, including the newline and a trailing null byte.
 ///
 /// Returns `Some(buf)` when it produces a null-terminated buffer, `None` at
