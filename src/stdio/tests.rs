@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, BufReader, Cursor, Read};
 
-use super::{fgetc, fgets};
+use super::{fgetc, fgets, fread};
 
 #[test]
 fn reads_bytes_as_unsigned_integers_and_advances_the_reader() {
@@ -237,4 +237,191 @@ fn fgets_propagates_an_error_after_copying_available_bytes() {
     assert_eq!(error.kind(), io::ErrorKind::Other);
     assert_eq!(error.to_string(), "read failed");
     assert_eq!(buf, [b'a' as i8, b'b' as i8, 99, 99]);
+}
+
+#[test]
+fn fread_reads_complete_elements() {
+    let mut reader = Cursor::new([1, 2, 3, 4]);
+    let mut buf = [0_u16; 2];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 2);
+    status.unwrap();
+    assert_eq!(
+        buf,
+        [u16::from_ne_bytes([1, 2]), u16::from_ne_bytes([3, 4])]
+    );
+}
+
+#[test]
+fn fread_does_not_read_past_the_destination() {
+    let mut reader = Cursor::new(b"abcde");
+    let mut buf = [0_u8; 3];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 3);
+    status.unwrap();
+    assert_eq!(buf, *b"abc");
+    assert_eq!(reader.fill_buf().unwrap(), b"de");
+}
+
+#[test]
+fn fread_returns_only_complete_elements_at_end_of_file() {
+    let mut reader = Cursor::new([1, 2, 3]);
+    let mut buf = [u16::from_ne_bytes([9, 9]); 2];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 1);
+    status.unwrap();
+    assert_eq!(bytemuck::cast_slice::<_, u8>(&buf), &[1, 2, 3, 9]);
+}
+
+#[test]
+fn fread_reads_elements_across_buffered_chunks() {
+    let mut reader = BufReader::with_capacity(3, Cursor::new([1, 2, 3, 4, 5, 6, 7, 8]));
+    let mut buf = [0_u32; 2];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 2);
+    status.unwrap();
+    assert_eq!(
+        buf,
+        [
+            u32::from_ne_bytes([1, 2, 3, 4]),
+            u32::from_ne_bytes([5, 6, 7, 8])
+        ]
+    );
+}
+
+#[test]
+fn fread_does_not_read_for_an_empty_buffer() {
+    let mut reader = Cursor::new(b"abc");
+
+    let (count, status) = fread::<u8, _>(&mut [], &mut reader);
+
+    assert_eq!(count, 0);
+    status.unwrap();
+    assert_eq!(reader.position(), 0);
+}
+
+#[test]
+fn fread_does_not_read_zero_sized_elements() {
+    let mut reader = Cursor::new(b"abc");
+    let mut buf = [(); 3];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 0);
+    status.unwrap();
+    assert_eq!(reader.position(), 0);
+}
+
+#[test]
+fn fread_accepts_dynamically_sized_buffered_readers() {
+    let mut bytes = Cursor::new(b"abc");
+    let reader: &mut dyn BufRead = &mut bytes;
+    let mut buf = [0_u8; 3];
+
+    let (count, status) = fread(&mut buf, reader);
+
+    assert_eq!(count, 3);
+    status.unwrap();
+    assert_eq!(buf, *b"abc");
+}
+
+#[test]
+fn fread_propagates_an_error_before_reading_any_bytes() {
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("read failed"))
+        }
+    }
+
+    impl BufRead for FailingReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            Err(io::Error::other("read failed"))
+        }
+
+        fn consume(&mut self, _amt: usize) {}
+    }
+
+    let mut buf = [9_u8; 2];
+
+    let (count, status) = fread(&mut buf, &mut FailingReader);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 0);
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "read failed");
+    assert_eq!(buf, [9; 2]);
+}
+
+#[test]
+fn fread_returns_an_error_without_discarding_the_element_count() {
+    struct PartialThenFail {
+        consumed: bool,
+    }
+
+    impl Read for PartialThenFail {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("read failed"))
+        }
+    }
+
+    impl BufRead for PartialThenFail {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.consumed {
+                Err(io::Error::other("read failed"))
+            } else {
+                Ok(b"abc")
+            }
+        }
+
+        fn consume(&mut self, amt: usize) {
+            assert_eq!(amt, 3);
+            self.consumed = true;
+        }
+    }
+
+    let mut reader = PartialThenFail { consumed: false };
+    let mut buf = [u16::from_ne_bytes([9, 9]); 2];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+    let error = status.unwrap_err();
+
+    assert_eq!(count, 1);
+    assert_eq!(error.kind(), io::ErrorKind::Other);
+    assert_eq!(error.to_string(), "read failed");
+    assert_eq!(bytemuck::cast_slice::<_, u8>(&buf), &[b'a', b'b', b'c', 9]);
+}
+
+#[test]
+fn fread_accepts_any_bit_pattern_types_with_padding() {
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Padded {
+        byte: u8,
+        number: u16,
+    }
+
+    // SAFETY: All bit patterns, including zero, are valid for both fields, and
+    // the type contains no pointers or interior mutability.
+    unsafe impl bytemuck::Zeroable for Padded {}
+    unsafe impl bytemuck::AnyBitPattern for Padded {}
+
+    let mut reader = Cursor::new([1, 2, 3, 4]);
+    let mut buf = [Padded { byte: 0, number: 0 }];
+
+    let (count, status) = fread(&mut buf, &mut reader);
+
+    assert_eq!(count, 1);
+    status.unwrap();
+    assert_eq!(buf[0].byte, 1);
+    assert_eq!(buf[0].number, u16::from_ne_bytes([3, 4]));
 }
