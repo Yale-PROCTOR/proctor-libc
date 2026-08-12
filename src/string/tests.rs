@@ -1,6 +1,6 @@
 use super::{
-    strcat, strchr, strchr_mut, strcmp, strcpy, strlen, strncat, strncmp, strncpy, strrchr,
-    strrchr_mut, strstr, strstr_mut,
+    strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strlen, strncat, strncmp, strncpy,
+    strrchr, strrchr_mut, strspn, strstr, strstr_mut,
 };
 
 fn i8s(bytes: &[u8]) -> &[i8] {
@@ -493,6 +493,82 @@ fn strrchr_mut_handles_null_and_missing_bytes() {
     let mut missing = i8s(b"abc\0tail").to_vec();
     assert_eq!(strrchr_mut(&mut missing, b'd'.into()), None);
     assert_eq!(missing, i8s(b"abc\0tail"));
+}
+
+#[test]
+fn strspn_returns_the_length_of_the_initial_matching_segment() {
+    assert_eq!(strspn(i8s(b"abcde\0tail"), i8s(b"cba\0ignored")), 3);
+    assert_eq!(strspn(i8s(b"abc\0tail"), i8s(b"abc\0ignored")), 3);
+    assert_eq!(strspn(i8s(b"abc\0tail"), i8s(b"xyz\0ignored")), 0);
+}
+
+#[test]
+fn strspn_handles_empty_strings_and_sets() {
+    assert_eq!(strspn(i8s(b"\0tail"), i8s(b"abc\0")), 0);
+    assert_eq!(strspn(i8s(b"abc\0tail"), i8s(b"\0ignored")), 0);
+}
+
+#[test]
+fn strspn_ignores_duplicates_and_bytes_after_null_bytes() {
+    assert_eq!(strspn(i8s(b"aab\0c"), i8s(b"aa\0b")), 2);
+}
+
+#[test]
+fn strspn_handles_bytes_with_the_high_bit_set() {
+    assert_eq!(strspn(&[-1, -128, 1, 0], &[-128, -1, 0]), 2);
+}
+
+#[test]
+fn strspn_handles_initial_segments_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut s1 = vec![1; expected];
+        s1.extend_from_slice(&[0, 2]);
+
+        assert_eq!(strspn(&s1, &[1, 0]), expected);
+    }
+}
+
+#[test]
+fn strcspn_returns_the_length_of_the_initial_nonmatching_segment() {
+    assert_eq!(strcspn(i8s(b"abcde\0tail"), i8s(b"dx\0ignored")), 3);
+    assert_eq!(strcspn(i8s(b"abc\0tail"), i8s(b"xyz\0ignored")), 3);
+    assert_eq!(strcspn(i8s(b"abc\0tail"), i8s(b"cba\0ignored")), 0);
+}
+
+#[test]
+fn strcspn_handles_empty_strings_and_sets() {
+    assert_eq!(strcspn(i8s(b"\0tail"), i8s(b"abc\0")), 0);
+    assert_eq!(strcspn(i8s(b"abc\0tail"), i8s(b"\0ignored")), 3);
+}
+
+#[test]
+fn strcspn_ignores_duplicates_and_bytes_after_null_bytes() {
+    assert_eq!(strcspn(i8s(b"abc\0d"), i8s(b"xx\0b")), 3);
+}
+
+#[test]
+fn strcspn_handles_bytes_with_the_high_bit_set() {
+    assert_eq!(strcspn(&[-1, -128, 1, 0], &[-128, 0]), 1);
+}
+
+#[test]
+fn span_functions_classify_every_non_null_byte() {
+    for byte in 1_u8..=u8::MAX {
+        let s = [byte as i8, 0];
+
+        assert_eq!(strspn(&s, &s), 1);
+        assert_eq!(strcspn(&s, &s), 0);
+    }
+}
+
+#[test]
+fn strcspn_handles_initial_segments_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut s1 = vec![1; expected];
+        s1.extend_from_slice(&[0, 2]);
+
+        assert_eq!(strcspn(&s1, &[2, 0]), expected);
+    }
 }
 
 #[test]

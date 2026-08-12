@@ -3,6 +3,7 @@ use std::mem;
 const WORD_BYTES: usize = mem::size_of::<usize>();
 const LOW_BITS: usize = usize::MAX / 0xff;
 const HIGH_BITS: usize = LOW_BITS * 0x80;
+const BYTE_SET_WORDS: usize = 256 / usize::BITS as usize;
 
 fn has_null_byte(word: usize) -> bool {
     word.wrapping_sub(LOW_BITS) & !word & HIGH_BITS != 0
@@ -208,6 +209,38 @@ pub fn strrchr(s: &[i8], c: i32) -> Option<&[i8]> {
 /// Finds the last `c`, converted to `i8`, in null-terminated `s` and returns its mutable suffix, or `None` if not found.
 pub fn strrchr_mut(s: &mut [i8], c: i32) -> Option<&mut [i8]> {
     rfind_byte(s, c as i8).map(|index| &mut s[index..])
+}
+
+fn string_span(s1: &[i8], s2: &[i8], included: bool) -> usize {
+    let mut byte_set = [0_usize; BYTE_SET_WORDS];
+
+    for &byte in &s2[..strlen(s2)] {
+        let byte = byte as u8 as usize;
+        byte_set[byte / usize::BITS as usize] |= 1 << (byte % usize::BITS as usize);
+    }
+
+    s1.iter()
+        .position(|&byte| {
+            if byte == 0 {
+                return true;
+            }
+
+            let byte = byte as u8 as usize;
+            let is_included =
+                byte_set[byte / usize::BITS as usize] & (1 << (byte % usize::BITS as usize)) != 0;
+            is_included != included
+        })
+        .unwrap()
+}
+
+/// Returns the length of the initial segment of null-terminated `s1` containing only bytes from null-terminated `s2`.
+pub fn strspn(s1: &[i8], s2: &[i8]) -> usize {
+    string_span(s1, s2, true)
+}
+
+/// Returns the length of the initial segment of null-terminated `s1` containing no bytes from null-terminated `s2`.
+pub fn strcspn(s1: &[i8], s2: &[i8]) -> usize {
+    string_span(s1, s2, false)
 }
 
 fn find_substring(s1: &[i8], s2: &[i8]) -> Option<usize> {
