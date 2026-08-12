@@ -13,6 +13,9 @@
 * Place functions corresponding to \<stdlib.h\> functions under
   `src/stdlib/mod.rs`, and place relevant test cases under `src/stdlib/tests.rs`.
 * Each test case should not exhibit any actual file-system update.
+* Keep function docstrings self-contained and concise: use a one-line summary
+  plus Rust-specific return and error details, without restating libc behavior
+  or referring to another function's docstring.
 
 # Think Before Coding
 

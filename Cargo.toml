@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 bytemuck = "1.25.2"
+f128 = "0.2"
+num-bigint = "0.4"
