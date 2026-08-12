@@ -1,6 +1,9 @@
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::{mem, ptr};
 
+#[cfg(target_os = "linux")]
+use std::{ffi::OsStr, fs, os::unix::ffi::OsStrExt, path::Path};
+
 /// Reads the next byte from `r`.
 ///
 /// Returns the byte and success, `-1` and success at end-of-file, or `-1` and
@@ -141,6 +144,40 @@ pub fn ftell<S: Seek + ?Sized>(s: &mut S) -> (i64, io::Result<()>) {
 /// Sets the position of `s` to its beginning.
 pub fn rewind<S: Seek + ?Sized>(s: &mut S) -> io::Result<()> {
     fseek(s, SeekFrom::Start(0)).1
+}
+
+/// Removes the file or empty directory named by `path`.
+///
+/// Returns zero and success, or `-1` and the filesystem error.
+#[cfg(target_os = "linux")]
+pub fn remove(path: &[i8]) -> (i32, io::Result<()>) {
+    let path = c_path(path);
+
+    match fs::remove_file(path) {
+        Ok(()) => (0, Ok(())),
+        Err(error) if error.kind() == io::ErrorKind::IsADirectory => match fs::remove_dir(path) {
+            Ok(()) => (0, Ok(())),
+            Err(error) => (-1, Err(error)),
+        },
+        Err(error) => (-1, Err(error)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn c_path(path: &[i8]) -> &Path {
+    let len = path.iter().position(|&byte| byte == 0).unwrap();
+    Path::new(OsStr::from_bytes(bytemuck::cast_slice(&path[..len])))
+}
+
+/// Renames the file or directory named by `old` to `new`.
+///
+/// Returns zero and success, or `-1` and the filesystem error.
+#[cfg(target_os = "linux")]
+pub fn rename(old: &[i8], new: &[i8]) -> (i32, io::Result<()>) {
+    match fs::rename(c_path(old), c_path(new)) {
+        Ok(()) => (0, Ok(())),
+        Err(error) => (-1, Err(error)),
+    }
 }
 
 /// Reads a line from `r` into `buf`, including the newline and a trailing null byte.

@@ -1,15 +1,97 @@
 use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::process::{Command, Stdio};
 
+#[cfg(target_os = "linux")]
+use std::ffi::OsString;
+#[cfg(target_os = "linux")]
+use std::fs;
+#[cfg(target_os = "linux")]
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::symlink;
+#[cfg(target_os = "linux")]
+use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
+#[cfg(target_os = "linux")]
+use super::{remove, rename};
 
 const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
 
 fn unwrap_stdio<T>((value, status): (T, io::Result<()>)) -> T {
     status.unwrap();
     value
+}
+
+#[cfg(target_os = "linux")]
+struct StdioTestDir(PathBuf);
+
+#[cfg(target_os = "linux")]
+impl StdioTestDir {
+    fn new() -> Self {
+        static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+        loop {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "proctor-libc-stdio-test-{}-{id}",
+                std::process::id()
+            ));
+
+            match fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("failed to create stdio test directory: {error}"),
+            }
+        }
+    }
+
+    fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+        self.0.join(path)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for StdioTestDir {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            if std::thread::panicking() {
+                eprintln!(
+                    "failed to clean up stdio test directory {}: {error}",
+                    self.0.display()
+                );
+            } else {
+                panic!(
+                    "failed to clean up stdio test directory {}: {error}",
+                    self.0.display()
+                );
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn null_terminated_path(path: &Path) -> Vec<i8> {
+    let mut bytes: Vec<i8> = path
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|&byte| byte as i8)
+        .collect();
+    bytes.push(0);
+    bytes
+}
+
+#[cfg(target_os = "linux")]
+fn assert_path_missing(path: &Path) {
+    assert_eq!(
+        fs::symlink_metadata(path).unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
 }
 
 #[test]
@@ -92,6 +174,548 @@ fn puts_stops_at_null_and_appends_a_newline() {
         &output.stdout,
         &[1, 2, b'\n', b'\n', 255, 128, b'\n']
     ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_deletes_a_regular_file_and_ignores_bytes_after_null() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("file");
+    fs::write(&file, b"contents").unwrap();
+    let mut path = null_terminated_path(&file);
+    path.extend([b'x' as i8, b'y' as i8]);
+
+    assert_eq!(unwrap_stdio(remove(&path)), 0);
+    assert_path_missing(&file);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_deletes_an_empty_directory_with_a_trailing_slash() {
+    let temp = StdioTestDir::new();
+    let directory = temp.join("empty");
+    fs::create_dir(&directory).unwrap();
+    let mut path = null_terminated_path(&directory);
+    path.pop();
+    path.extend([b'/' as i8, 0]);
+
+    assert_eq!(unwrap_stdio(remove(&path)), 0);
+    assert_path_missing(&directory);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_rejects_a_nonempty_directory_without_changing_it() {
+    let temp = StdioTestDir::new();
+    let directory = temp.join("nonempty");
+    let child = directory.join("child");
+    fs::create_dir(&directory).unwrap();
+    fs::write(&child, b"contents").unwrap();
+
+    let (value, status) = remove(&null_terminated_path(&directory));
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::DirectoryNotEmpty);
+    assert!(directory.is_dir());
+    assert_eq!(fs::read(child).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_unlinks_a_symbolic_link_to_a_file_without_changing_the_target() {
+    let temp = StdioTestDir::new();
+    let target = temp.join("target-file");
+    let link = temp.join("file-link");
+    fs::write(&target, b"contents").unwrap();
+    symlink(&target, &link).unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&link))), 0);
+
+    assert_path_missing(&link);
+    assert_eq!(fs::read(target).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_unlinks_a_symbolic_link_to_a_directory_without_changing_the_target() {
+    let temp = StdioTestDir::new();
+    let target = temp.join("target-directory");
+    let child = target.join("child");
+    let link = temp.join("directory-link");
+    fs::create_dir(&target).unwrap();
+    fs::write(&child, b"contents").unwrap();
+    symlink(&target, &link).unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&link))), 0);
+
+    assert_path_missing(&link);
+    assert!(target.is_dir());
+    assert_eq!(fs::read(child).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_unlinks_a_broken_symbolic_link() {
+    let temp = StdioTestDir::new();
+    let target = temp.join("missing-target");
+    let link = temp.join("broken-link");
+    symlink(&target, &link).unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&link))), 0);
+
+    assert_path_missing(&link);
+    assert_path_missing(&target);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_decrements_a_files_link_count_without_changing_its_other_link() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("file");
+    let other_link = temp.join("other-link");
+    fs::write(&file, b"contents").unwrap();
+    fs::hard_link(&file, &other_link).unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&file))), 0);
+
+    assert_path_missing(&file);
+    assert_eq!(fs::read(other_link).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_rejects_a_trailing_slash_on_a_regular_file_without_changing_it() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("file");
+    fs::write(&file, b"contents").unwrap();
+    let mut path = null_terminated_path(&file);
+    path.pop();
+    path.extend([b'/' as i8, 0]);
+
+    let (value, status) = remove(&path);
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::NotADirectory);
+    assert_eq!(fs::read(file).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_accepts_a_non_utf8_path() {
+    let temp = StdioTestDir::new();
+    let file = temp.join(OsString::from_vec(b"non-utf8-\xff".to_vec()));
+    fs::write(&file, b"contents").unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&file))), 0);
+    assert_path_missing(&file);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_reports_a_missing_path_without_changing_its_parent() {
+    let temp = StdioTestDir::new();
+    let missing = temp.join("missing");
+
+    let (value, status) = remove(&null_terminated_path(&missing));
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::NotFound);
+    assert!(temp.0.is_dir());
+    assert_path_missing(&missing);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_reports_an_empty_path() {
+    let (value, status) = remove(&[0]);
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::NotFound);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn remove_unlinks_an_open_file_without_invalidating_the_open_handle() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("open-file");
+    fs::write(&file, b"contents").unwrap();
+    let mut open_file = fs::File::open(&file).unwrap();
+
+    assert_eq!(unwrap_stdio(remove(&null_terminated_path(&file))), 0);
+    assert_path_missing(&file);
+
+    let mut contents = String::new();
+    open_file.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_moves_a_regular_file_between_directories_and_ignores_bytes_after_each_null() {
+    let temp = StdioTestDir::new();
+    let old_parent = temp.join("old-parent");
+    let new_parent = temp.join("new-parent");
+    fs::create_dir(&old_parent).unwrap();
+    fs::create_dir(&new_parent).unwrap();
+    let old = old_parent.join("old");
+    let new = new_parent.join("new");
+    fs::write(&old, b"contents").unwrap();
+    let mut old_path = null_terminated_path(&old);
+    let mut new_path = null_terminated_path(&new);
+    old_path.extend([b'x' as i8, b'y' as i8]);
+    new_path.extend([b'a' as i8, b'b' as i8]);
+
+    assert_eq!(unwrap_stdio(rename(&old_path, &new_path)), 0);
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(new).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_moves_a_populated_directory() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old-directory");
+    let new = temp.join("new-directory");
+    fs::create_dir(&old).unwrap();
+    fs::write(old.join("child"), b"contents").unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(new.join("child")).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_replaces_an_existing_regular_file() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old");
+    let new = temp.join("new");
+    fs::write(&old, b"old contents").unwrap();
+    fs::write(&new, b"new contents").unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(new).unwrap(), b"old contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_replaces_an_empty_directory() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old-directory");
+    let new = temp.join("new-directory");
+    fs::create_dir(&old).unwrap();
+    fs::write(old.join("child"), b"contents").unwrap();
+    fs::create_dir(&new).unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(new.join("child")).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_rejects_a_nonempty_destination_directory_without_changing_either_directory() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old-directory");
+    let new = temp.join("new-directory");
+    fs::create_dir(&old).unwrap();
+    fs::create_dir(&new).unwrap();
+    fs::write(old.join("old-child"), b"old contents").unwrap();
+    fs::write(new.join("new-child"), b"new contents").unwrap();
+
+    let (value, status) = rename(&null_terminated_path(&old), &null_terminated_path(&new));
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::DirectoryNotEmpty);
+    assert_eq!(fs::read(old.join("old-child")).unwrap(), b"old contents");
+    assert_eq!(fs::read(new.join("new-child")).unwrap(), b"new contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_rejects_file_directory_type_mismatches_without_changing_either_path() {
+    let temp = StdioTestDir::new();
+    let old_file = temp.join("old-file");
+    let new_directory = temp.join("new-directory");
+    let old_directory = temp.join("old-directory");
+    let new_file = temp.join("new-file");
+    fs::write(&old_file, b"old file").unwrap();
+    fs::create_dir(&new_directory).unwrap();
+    fs::create_dir(&old_directory).unwrap();
+    fs::write(old_directory.join("child"), b"old directory").unwrap();
+    fs::write(&new_file, b"new file").unwrap();
+
+    let (file_value, file_status) = rename(
+        &null_terminated_path(&old_file),
+        &null_terminated_path(&new_directory),
+    );
+    let (directory_value, directory_status) = rename(
+        &null_terminated_path(&old_directory),
+        &null_terminated_path(&new_file),
+    );
+
+    assert_eq!(file_value, -1);
+    assert_eq!(file_status.unwrap_err().kind(), io::ErrorKind::IsADirectory);
+    assert_eq!(directory_value, -1);
+    assert_eq!(
+        directory_status.unwrap_err().kind(),
+        io::ErrorKind::NotADirectory
+    );
+    assert_eq!(fs::read(old_file).unwrap(), b"old file");
+    assert!(new_directory.is_dir());
+    assert_eq!(
+        fs::read(old_directory.join("child")).unwrap(),
+        b"old directory"
+    );
+    assert_eq!(fs::read(new_file).unwrap(), b"new file");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_moves_a_broken_symbolic_link_without_resolving_it() {
+    let temp = StdioTestDir::new();
+    let target = temp.join("missing-target");
+    let old = temp.join("old-link");
+    let new = temp.join("new-link");
+    symlink(&target, &old).unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read_link(&new).unwrap(), target);
+    assert_path_missing(&target);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_replaces_a_destination_symlink_without_changing_its_target() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old-file");
+    let target = temp.join("target-directory");
+    let new = temp.join("new-link");
+    fs::write(&old, b"contents").unwrap();
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("child"), b"target contents").unwrap();
+    symlink(&target, &new).unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert!(!fs::symlink_metadata(&new).unwrap().file_type().is_symlink());
+    assert_eq!(fs::read(new).unwrap(), b"contents");
+    assert_eq!(fs::read(target.join("child")).unwrap(), b"target contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_succeeds_without_changing_a_path_renamed_to_itself() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("file");
+    fs::write(&file, b"contents").unwrap();
+    let path = null_terminated_path(&file);
+
+    assert_eq!(unwrap_stdio(rename(&path, &path)), 0);
+    assert_eq!(fs::read(file).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_succeeds_without_removing_different_hard_links_to_the_same_file() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old-link");
+    let new = temp.join("new-link");
+    fs::write(&old, b"contents").unwrap();
+    fs::hard_link(&old, &new).unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_eq!(fs::read(old).unwrap(), b"contents");
+    assert_eq!(fs::read(new).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_does_not_invalidate_an_open_handle_to_the_replaced_file() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("old");
+    let new = temp.join("new");
+    fs::write(&old, b"old contents").unwrap();
+    fs::write(&new, b"new contents").unwrap();
+    let mut replaced_file = fs::File::open(&new).unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(&new).unwrap(), b"old contents");
+    let mut contents = String::new();
+    replaced_file.read_to_string(&mut contents).unwrap();
+    assert_eq!(contents, "new contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_accepts_non_utf8_paths() {
+    let temp = StdioTestDir::new();
+    let old = temp.join(OsString::from_vec(b"old-\xff".to_vec()));
+    let new = temp.join(OsString::from_vec(b"new-\xfe".to_vec()));
+    fs::write(&old, b"contents").unwrap();
+
+    assert_eq!(
+        unwrap_stdio(rename(
+            &null_terminated_path(&old),
+            &null_terminated_path(&new)
+        )),
+        0
+    );
+
+    assert_path_missing(&old);
+    assert_eq!(fs::read(new).unwrap(), b"contents");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_reports_empty_paths_without_changing_the_existing_file() {
+    let temp = StdioTestDir::new();
+    let file = temp.join("file");
+    let missing = temp.join("missing");
+    fs::write(&file, b"contents").unwrap();
+
+    let (old_value, old_status) = rename(&[0], &null_terminated_path(&missing));
+    let (new_value, new_status) = rename(&null_terminated_path(&file), &[0]);
+
+    assert_eq!(old_value, -1);
+    assert_eq!(old_status.unwrap_err().kind(), io::ErrorKind::NotFound);
+    assert_eq!(new_value, -1);
+    assert_eq!(new_status.unwrap_err().kind(), io::ErrorKind::NotFound);
+    assert_eq!(fs::read(file).unwrap(), b"contents");
+    assert_path_missing(&missing);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_reports_missing_paths_without_changing_existing_entries() {
+    let temp = StdioTestDir::new();
+    let missing_old = temp.join("missing-old");
+    let existing_new = temp.join("existing-new");
+    let existing_old = temp.join("existing-old");
+    let missing_parent = temp.join("missing-parent");
+    let missing_new = missing_parent.join("new");
+    fs::write(&existing_new, b"new contents").unwrap();
+    fs::write(&existing_old, b"old contents").unwrap();
+
+    let (old_value, old_status) = rename(
+        &null_terminated_path(&missing_old),
+        &null_terminated_path(&existing_new),
+    );
+    let (new_value, new_status) = rename(
+        &null_terminated_path(&existing_old),
+        &null_terminated_path(&missing_new),
+    );
+
+    assert_eq!(old_value, -1);
+    assert_eq!(old_status.unwrap_err().kind(), io::ErrorKind::NotFound);
+    assert_eq!(new_value, -1);
+    assert_eq!(new_status.unwrap_err().kind(), io::ErrorKind::NotFound);
+    assert_path_missing(&missing_old);
+    assert_eq!(fs::read(existing_new).unwrap(), b"new contents");
+    assert_eq!(fs::read(existing_old).unwrap(), b"old contents");
+    assert_path_missing(&missing_parent);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_rejects_trailing_slashes_on_regular_file_paths_without_changing_them() {
+    let temp = StdioTestDir::new();
+    let first_old = temp.join("first-old");
+    let first_new = temp.join("first-new");
+    let second_old = temp.join("second-old");
+    let second_new = temp.join("second-new");
+    fs::write(&first_old, b"first contents").unwrap();
+    fs::write(&second_old, b"second contents").unwrap();
+    let mut first_old_path = null_terminated_path(&first_old);
+    first_old_path.pop();
+    first_old_path.extend([b'/' as i8, 0]);
+    let mut second_new_path = null_terminated_path(&second_new);
+    second_new_path.pop();
+    second_new_path.extend([b'/' as i8, 0]);
+
+    let (old_value, old_status) = rename(&first_old_path, &null_terminated_path(&first_new));
+    let (new_value, new_status) = rename(&null_terminated_path(&second_old), &second_new_path);
+
+    assert_eq!(old_value, -1);
+    assert_eq!(old_status.unwrap_err().kind(), io::ErrorKind::NotADirectory);
+    assert_eq!(new_value, -1);
+    assert_eq!(new_status.unwrap_err().kind(), io::ErrorKind::NotADirectory);
+    assert_eq!(fs::read(first_old).unwrap(), b"first contents");
+    assert_path_missing(&first_new);
+    assert_eq!(fs::read(second_old).unwrap(), b"second contents");
+    assert_path_missing(&second_new);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn rename_rejects_moving_a_directory_beneath_itself_without_changing_it() {
+    let temp = StdioTestDir::new();
+    let old = temp.join("directory");
+    let child = old.join("child");
+    let new = child.join("moved");
+    fs::create_dir(&old).unwrap();
+    fs::create_dir(&child).unwrap();
+    fs::write(child.join("file"), b"contents").unwrap();
+
+    let (value, status) = rename(&null_terminated_path(&old), &null_terminated_path(&new));
+
+    assert_eq!(value, -1);
+    assert_eq!(status.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+    assert_eq!(fs::read(child.join("file")).unwrap(), b"contents");
+    assert_path_missing(&new);
 }
 
 #[test]

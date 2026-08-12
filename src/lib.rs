@@ -6,6 +6,8 @@ pub mod strings;
 pub use stdio::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
+#[cfg(target_os = "linux")]
+pub use stdio::{remove, rename};
 pub use stdlib::{atof, atoi, atol, strtod, strtof, strtol, strtold, strtoul};
 pub use string::{
     memchr, memchr_mut, memcmp, strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup,
