@@ -1,4 +1,4 @@
-use super::{StrtolError, strtol};
+use super::{StrtolError, StrtoulError, strtol, strtoul};
 
 fn i8s(bytes: &[u8]) -> &[i8] {
     bytemuck::cast_slice(bytes)
@@ -128,6 +128,120 @@ fn strtol_clamps_overflow_and_consumes_all_digits() {
 fn strtol_rejects_non_ascii_bytes() {
     let buf = [-1_i8, b'1' as i8];
     let ((value, suffix), status) = strtol(&buf, 10);
+
+    assert_eq!(value, 0);
+    assert_eq!(suffix.as_ptr(), buf.as_ptr());
+    assert_eq!(status, Ok(()));
+}
+
+#[test]
+fn strtoul_parses_decimal_and_returns_the_suffix() {
+    let buf = i8s(b" \t\n\x0b\x0c\r+42xyz\0ignored");
+
+    assert_eq!(strtoul(buf, 10), ((42, i8s(b"xyz\0ignored")), Ok(())));
+}
+
+#[test]
+fn strtoul_detects_the_base_and_accepts_explicit_bases() {
+    assert_eq!(strtoul(i8s(b"123"), 0), ((123, i8s(b"")), Ok(())));
+    assert_eq!(strtoul(i8s(b"0779"), 0), ((63, i8s(b"9")), Ok(())));
+    assert_eq!(strtoul(i8s(b"0x1fZ"), 0), ((31, i8s(b"Z")), Ok(())));
+    assert_eq!(strtoul(i8s(b"0X10!"), 16), ((16, i8s(b"!")), Ok(())));
+    assert_eq!(strtoul(i8s(b"zZ?"), 36), ((1295, i8s(b"?")), Ok(())));
+    assert_eq!(strtoul(i8s(b"1012"), 2), ((5, i8s(b"2")), Ok(())));
+}
+
+#[test]
+fn strtoul_only_consumes_a_hex_prefix_followed_by_a_digit() {
+    assert_eq!(strtoul(i8s(b"0x"), 0), ((0, i8s(b"x")), Ok(())));
+    assert_eq!(strtoul(i8s(b"-0xg"), 16), ((0, i8s(b"xg")), Ok(())));
+}
+
+#[test]
+fn strtoul_does_not_accept_a_binary_prefix() {
+    assert_eq!(strtoul(i8s(b"0b10"), 0), ((0, i8s(b"b10")), Ok(())));
+    assert_eq!(strtoul(i8s(b"0b10"), 2), ((0, i8s(b"b10")), Ok(())));
+}
+
+#[test]
+fn strtoul_returns_the_original_slice_when_there_are_no_digits() {
+    for buf in [i8s(b""), i8s(b"   "), i8s(b"-"), i8s(b"+q"), i8s(b"\0")] {
+        let ((value, suffix), status) = strtoul(buf, 10);
+
+        assert_eq!(value, 0);
+        assert_eq!(suffix.as_ptr(), buf.as_ptr());
+        assert_eq!(suffix.len(), buf.len());
+        assert_eq!(status, Ok(()));
+    }
+}
+
+#[test]
+fn strtoul_stops_at_the_first_null_byte() {
+    assert_eq!(
+        strtoul(i8s(b"123\x00456"), 10),
+        ((123, i8s(b"\x00456")), Ok(()))
+    );
+}
+
+#[test]
+fn strtoul_rejects_unsupported_bases() {
+    for base in [-1, 1, 37] {
+        let buf = i8s(b"10");
+        let ((value, suffix), status) = strtoul(buf, base);
+
+        assert_eq!(value, 0);
+        assert_eq!(suffix.as_ptr(), buf.as_ptr());
+        assert_eq!(suffix.len(), buf.len());
+        assert_eq!(status, Err(StrtoulError::InvalidBase));
+    }
+}
+
+#[test]
+fn strtoul_accepts_exact_u64_limits() {
+    assert_eq!(
+        strtoul(i8s(b"18446744073709551615"), 10),
+        ((u64::MAX, i8s(b"")), Ok(()))
+    );
+    assert_eq!(
+        strtoul(i8s(b"ffffffffffffffff"), 16),
+        ((u64::MAX, i8s(b"")), Ok(()))
+    );
+}
+
+#[test]
+fn strtoul_negates_in_the_unsigned_return_type() {
+    assert_eq!(strtoul(i8s(b"-1"), 10), ((u64::MAX, i8s(b"")), Ok(())));
+    assert_eq!(
+        strtoul(i8s(b"-18446744073709551615"), 10),
+        ((1, i8s(b"")), Ok(()))
+    );
+    assert_eq!(strtoul(i8s(b"-0"), 10), ((0, i8s(b"")), Ok(())));
+}
+
+#[test]
+fn strtoul_clamps_overflow_and_consumes_all_digits() {
+    assert_eq!(
+        strtoul(i8s(b"18446744073709551616"), 10),
+        ((u64::MAX, i8s(b"")), Err(StrtoulError::OutOfRange))
+    );
+    assert_eq!(
+        strtoul(i8s(b"-18446744073709551616"), 10),
+        ((u64::MAX, i8s(b"")), Err(StrtoulError::OutOfRange))
+    );
+    assert_eq!(
+        strtoul(i8s(b"10000000000000000rest"), 16),
+        ((u64::MAX, i8s(b"rest")), Err(StrtoulError::OutOfRange))
+    );
+    assert_eq!(
+        strtoul(i8s(b"18446744073709551616123!"), 10),
+        ((u64::MAX, i8s(b"!")), Err(StrtoulError::OutOfRange))
+    );
+}
+
+#[test]
+fn strtoul_rejects_non_ascii_bytes() {
+    let buf = [-1_i8, b'1' as i8];
+    let ((value, suffix), status) = strtoul(&buf, 10);
 
     assert_eq!(value, 0);
     assert_eq!(suffix.as_ptr(), buf.as_ptr());

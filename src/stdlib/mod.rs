@@ -7,6 +7,15 @@ pub enum StrtolError {
     OutOfRange,
 }
 
+/// An error reported by [`strtoul`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StrtoulError {
+    /// The requested base is not supported.
+    InvalidBase,
+    /// The converted value is outside the range of a `u64`.
+    OutOfRange,
+}
+
 /// Converts the initial integer in `buf` using `base`.
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
@@ -97,6 +106,92 @@ pub fn strtol(buf: &[i8], base: i32) -> ((i64, &[i8]), Result<(), StrtolError>) 
         }
     } else {
         magnitude as i64
+    };
+
+    ((value, &buf[index..]), Ok(()))
+}
+
+/// Converts the initial unsigned integer in `buf` using `base`.
+///
+/// Returns the converted value, the unconsumed suffix, and the conversion
+/// status. No conversion returns zero and leaves all of `buf` unconsumed.
+/// `StrtoulError::InvalidBase` indicates that `base` is neither zero nor in
+/// `2..=36`. `StrtoulError::OutOfRange` indicates that the magnitude does not
+/// fit in `u64`; the returned value is [`u64::MAX`]. A leading minus sign
+/// negates a successfully converted value using unsigned arithmetic.
+pub fn strtoul(buf: &[i8], base: i32) -> ((u64, &[i8]), Result<(), StrtoulError>) {
+    if base != 0 && !(2..=36).contains(&base) {
+        return ((0, buf), Err(StrtoulError::InvalidBase));
+    }
+
+    let mut index = 0;
+    while index < buf.len() && is_c_whitespace(buf[index]) {
+        index += 1;
+    }
+
+    let negative = match buf.get(index).copied() {
+        Some(byte) if byte == b'-' as i8 => {
+            index += 1;
+            true
+        }
+        Some(byte) if byte == b'+' as i8 => {
+            index += 1;
+            false
+        }
+        _ => false,
+    };
+
+    let radix = if base == 0 {
+        if has_hex_prefix(buf, index) {
+            index += 2;
+            16
+        } else if buf.get(index).copied() == Some(b'0' as i8) {
+            8
+        } else {
+            10
+        }
+    } else {
+        let radix = base as u32;
+        if radix == 16 && has_hex_prefix(buf, index) {
+            index += 2;
+        }
+        radix
+    };
+
+    let first_digit = index;
+    let cutoff = u64::MAX / u64::from(radix);
+    let cutlim = u64::MAX % u64::from(radix);
+    let mut magnitude = 0_u64;
+    let mut out_of_range = false;
+
+    while let Some(digit) = buf.get(index).copied().and_then(digit_value) {
+        if digit >= radix {
+            break;
+        }
+
+        if !out_of_range {
+            let digit = u64::from(digit);
+            if magnitude > cutoff || (magnitude == cutoff && digit > cutlim) {
+                out_of_range = true;
+            } else {
+                magnitude = magnitude * u64::from(radix) + digit;
+            }
+        }
+        index += 1;
+    }
+
+    if index == first_digit {
+        return ((0, buf), Ok(()));
+    }
+
+    if out_of_range {
+        return ((u64::MAX, &buf[index..]), Err(StrtoulError::OutOfRange));
+    }
+
+    let value = if negative {
+        0_u64.wrapping_sub(magnitude)
+    } else {
+        magnitude
     };
 
     ((value, &buf[index..]), Ok(()))
