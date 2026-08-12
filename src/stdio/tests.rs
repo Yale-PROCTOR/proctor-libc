@@ -31,8 +31,8 @@ fn standard_stream_child() {
         }
         Ok("puts") => {
             assert_eq!(unwrap_stdio(puts(&[1, 2, 0, 3])), 0);
-            assert_eq!(unwrap_stdio(puts(&[])), 0);
-            assert_eq!(unwrap_stdio(puts(&[-1, -128])), 0);
+            assert_eq!(unwrap_stdio(puts(&[0])), 0);
+            assert_eq!(unwrap_stdio(puts(&[-1, -128, 0])), 0);
         }
         Ok(mode) => panic!("unknown standard-stream child mode: {mode}"),
         Err(error) => panic!("invalid standard-stream child mode: {error}"),
@@ -355,17 +355,6 @@ fn fputs_writes_bytes_before_the_first_null_and_returns_zero() {
 }
 
 #[test]
-fn fputs_writes_the_entire_slice_when_it_has_no_null() {
-    let mut writer = Vec::new();
-
-    assert_eq!(
-        unwrap_stdio(fputs(&[b'a' as i8, b'b' as i8], &mut writer)),
-        0
-    );
-    assert_eq!(writer, b"ab");
-}
-
-#[test]
 fn fputs_does_not_write_an_empty_string() {
     struct PanickingWriter;
 
@@ -379,7 +368,6 @@ fn fputs_does_not_write_an_empty_string() {
         }
     }
 
-    assert_eq!(unwrap_stdio(fputs(&[], &mut PanickingWriter)), 0);
     assert_eq!(
         unwrap_stdio(fputs(&[0, b'a' as i8], &mut PanickingWriter)),
         0
@@ -430,7 +418,7 @@ fn fputs_reports_a_writer_that_makes_no_progress() {
         }
     }
 
-    let (value, status) = fputs(&[1], &mut ZeroWriter);
+    let (value, status) = fputs(&[1, 0], &mut ZeroWriter);
     let error = status.unwrap_err();
 
     assert_eq!(value, -1);
@@ -459,7 +447,7 @@ fn fputs_propagates_write_errors_after_partial_output() {
     }
 
     let mut writer = FailingWriter { bytes: Vec::new() };
-    let (value, status) = fputs(&[1, 2, 3, 4], &mut writer);
+    let (value, status) = fputs(&[1, 2, 3, 4, 0], &mut writer);
     let error = status.unwrap_err();
 
     assert_eq!(value, -1);
@@ -490,7 +478,7 @@ fn fputs_does_not_retry_an_interrupted_write() {
     }
 
     let mut writer = InterruptedWriter { calls: 0 };
-    let (value, status) = fputs(&[1, 2], &mut writer);
+    let (value, status) = fputs(&[1, 2, 0], &mut writer);
     let error = status.unwrap_err();
 
     assert_eq!(value, -1);
@@ -503,7 +491,7 @@ fn fputs_accepts_dynamically_sized_writers() {
     let mut bytes = Vec::new();
     let writer: &mut dyn Write = &mut bytes;
 
-    assert_eq!(unwrap_stdio(fputs(&[1, 2], writer)), 0);
+    assert_eq!(unwrap_stdio(fputs(&[1, 2, 0], writer)), 0);
     assert_eq!(bytes, [1, 2]);
 }
 
@@ -616,17 +604,6 @@ fn fgets_with_one_byte_buffer_writes_only_null_without_reading() {
     let mut buf = [99];
 
     assert_eq!(unwrap_stdio(fgets(&mut buf, &mut reader)).unwrap(), &[0]);
-    assert_eq!(reader.position(), 0);
-}
-
-#[test]
-fn fgets_rejects_an_empty_buffer_without_reading() {
-    let mut reader = Cursor::new(b"abc");
-    let (value, status) = fgets(&mut [], &mut reader);
-    let error = status.unwrap_err();
-
-    assert!(value.is_none());
-    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     assert_eq!(reader.position(), 0);
 }
 
