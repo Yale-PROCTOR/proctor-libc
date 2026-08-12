@@ -143,6 +143,48 @@ fn compare(s1: &[i8], s2: &[i8], n: usize) -> i32 {
     0
 }
 
+/// Compares the first `n` bytes of two memory regions.
+pub fn memcmp(buf1: &[u8], buf2: &[u8], n: usize) -> i32 {
+    let buf1 = &buf1[..n];
+    let buf2 = &buf2[..n];
+    let word_end = n / WORD_BYTES * WORD_BYTES;
+    let mut index = 0;
+
+    while index < word_end {
+        let word1 = usize::from_ne_bytes(buf1[index..index + WORD_BYTES].try_into().unwrap());
+        let word2 = usize::from_ne_bytes(buf2[index..index + WORD_BYTES].try_into().unwrap());
+
+        if word1 == word2 {
+            index += WORD_BYTES;
+            continue;
+        }
+
+        for offset in 0..WORD_BYTES {
+            let byte1 = buf1[index + offset];
+            let byte2 = buf2[index + offset];
+
+            if byte1 != byte2 {
+                return i32::from(byte1) - i32::from(byte2);
+            }
+        }
+
+        unreachable!();
+    }
+
+    while index < n {
+        let byte1 = buf1[index];
+        let byte2 = buf2[index];
+
+        if byte1 != byte2 {
+            return i32::from(byte1) - i32::from(byte2);
+        }
+
+        index += 1;
+    }
+
+    0
+}
+
 /// Compares two null-terminated byte strings.
 pub fn strcmp(s1: &[i8], s2: &[i8]) -> i32 {
     compare(s1, s2, usize::MAX)

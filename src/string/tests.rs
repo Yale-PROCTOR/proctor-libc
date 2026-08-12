@@ -1,6 +1,6 @@
 use super::{
-    strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup, strlen, strncat, strncmp, strncpy,
-    strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,
+    memcmp, strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup, strlen, strncat, strncmp,
+    strncpy, strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,
 };
 
 fn i8s(bytes: &[u8]) -> &[i8] {
@@ -93,6 +93,54 @@ fn strndup_finds_null_bytes_at_each_word_offset() {
         assert_eq!(&result[..length], vec![-1; length]);
         assert_eq!(result[length], 0);
         assert_eq!(result.len(), length + 1);
+    }
+}
+
+#[test]
+fn memcmp_compares_bytes() {
+    assert_eq!(memcmp(b"", b"", 0), 0);
+    assert_eq!(memcmp(b"hello", b"hello", 5), 0);
+    assert_eq!(memcmp(b"abc", b"abd", 3), -1);
+    assert_eq!(memcmp(b"abe", b"abc", 3), 2);
+}
+
+#[test]
+fn memcmp_respects_the_byte_limit() {
+    assert_eq!(memcmp(b"abcx", b"abcy", 3), 0);
+    assert_eq!(memcmp(b"abcx", b"abcy", 4), -1);
+}
+
+#[test]
+fn memcmp_compares_bytes_as_unsigned() {
+    assert_eq!(memcmp(&[255], &[1], 1), 254);
+    assert_eq!(memcmp(&[1], &[255], 1), -254);
+}
+
+#[test]
+fn memcmp_compares_bytes_after_null_bytes() {
+    assert_eq!(memcmp(&[1, 0, 2], &[1, 0, 3], 3), -1);
+}
+
+#[test]
+fn memcmp_uses_the_first_differing_byte() {
+    let mut buf1 = vec![0; size_of::<usize>()];
+    let mut buf2 = buf1.clone();
+    buf1[0] = 1;
+    buf2[0] = 2;
+    buf1[size_of::<usize>() - 1] = 255;
+
+    assert!(memcmp(&buf1, &buf2, buf1.len()) < 0);
+}
+
+#[test]
+fn memcmp_finds_differences_at_each_word_offset() {
+    for offset in 0..=size_of::<usize>() * 3 {
+        let mut buf1 = vec![1; offset];
+        let mut buf2 = buf1.clone();
+        buf1.push(2);
+        buf2.push(3);
+
+        assert_eq!(memcmp(&buf1, &buf2, offset + 1), -1);
     }
 }
 
