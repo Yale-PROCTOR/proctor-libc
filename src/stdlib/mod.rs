@@ -91,6 +91,11 @@ struct Mantissa {
 }
 
 /// Converts the initial floating-point number in `buf` to an `f64`.
+pub fn atof(buf: &[i8]) -> f64 {
+    strtod(buf).0.0
+}
+
+/// Converts the initial floating-point number in `buf` to an `f64`.
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
 /// status. `StrtoFloatError::OutOfRange` is the only error variant and reports
@@ -534,6 +539,16 @@ struct IntegerMagnitude {
     magnitude: u64,
     end: usize,
     out_of_range: bool,
+}
+
+/// Converts the initial decimal integer in `buf` to an `i32`.
+pub fn atoi(buf: &[i8]) -> i32 {
+    strtol(buf, 10).0.0 as i32
+}
+
+/// Converts the initial decimal integer in `buf` to an `i64`.
+pub fn atol(buf: &[i8]) -> i64 {
+    strtol(buf, 10).0.0
 }
 
 /// Converts the initial integer in `buf` using `base`.

@@ -1,4 +1,6 @@
-use super::{StrtoFloatError, StrtoIntError, strtod, strtof, strtol, strtold, strtoul};
+use super::{
+    StrtoFloatError, StrtoIntError, atof, atoi, atol, strtod, strtof, strtol, strtold, strtoul,
+};
 
 fn i8s(bytes: &[u8]) -> &[i8] {
     bytemuck::cast_slice(bytes)
@@ -6,6 +8,25 @@ fn i8s(bytes: &[u8]) -> &[i8] {
 
 fn f128_bits(value: f128::f128) -> u128 {
     u128::from_ne_bytes(value.inner())
+}
+
+#[test]
+fn atof_converts_a_floating_point_prefix() {
+    assert_eq!(atof(i8s(b" \t\n\x0b\x0c\r-12.5e+1rest\0ignored")), -125.0);
+    assert_eq!(atof(i8s(b"0x1.8p+2!")), 6.0);
+}
+
+#[test]
+fn atof_returns_zero_when_no_conversion_is_possible() {
+    assert_eq!(atof(i8s(b"not a number")), 0.0);
+    assert_eq!(atof(i8s(b"")), 0.0);
+}
+
+#[test]
+fn atof_preserves_special_values_and_signed_zero() {
+    assert_eq!(atof(i8s(b"-INFINITY\0ignored")), f64::NEG_INFINITY);
+    assert!(atof(i8s(b"nan(payload)rest")).is_nan());
+    assert_eq!(atof(i8s(b"-0.0")).to_bits(), (-0.0_f64).to_bits());
 }
 
 #[test]
@@ -218,6 +239,44 @@ fn strtol_parses_decimal_and_returns_the_suffix() {
     let buf = i8s(b" \t\n\x0b\x0c\r-42xyz\0ignored");
 
     assert_eq!(strtol(buf, 10), ((-42, i8s(b"xyz\0ignored")), Ok(())));
+}
+
+#[test]
+fn atoi_converts_a_decimal_prefix() {
+    assert_eq!(atoi(i8s(b" \t\n\x0b\x0c\r-42rest\0ignored")), -42);
+    assert_eq!(atoi(i8s(b"+010!")), 10);
+    assert_eq!(atoi(i8s(b"0x10")), 0);
+}
+
+#[test]
+fn atoi_returns_zero_when_no_conversion_is_possible() {
+    assert_eq!(atoi(i8s(b"not a number")), 0);
+    assert_eq!(atoi(i8s(b"")), 0);
+}
+
+#[test]
+fn atoi_accepts_exact_i32_limits() {
+    assert_eq!(atoi(i8s(b"2147483647")), i32::MAX);
+    assert_eq!(atoi(i8s(b"-2147483648")), i32::MIN);
+}
+
+#[test]
+fn atol_converts_a_decimal_prefix() {
+    assert_eq!(atol(i8s(b" \t\n\x0b\x0c\r+42rest\0ignored")), 42);
+    assert_eq!(atol(i8s(b"010!")), 10);
+    assert_eq!(atol(i8s(b"0x10")), 0);
+}
+
+#[test]
+fn atol_returns_zero_when_no_conversion_is_possible() {
+    assert_eq!(atol(i8s(b"not a number")), 0);
+    assert_eq!(atol(i8s(b"")), 0);
+}
+
+#[test]
+fn atol_accepts_exact_i64_limits() {
+    assert_eq!(atol(i8s(b"9223372036854775807")), i64::MAX);
+    assert_eq!(atol(i8s(b"-9223372036854775808")), i64::MIN);
 }
 
 #[test]
