@@ -8,6 +8,73 @@ fn has_null_byte(word: usize) -> bool {
     word.wrapping_sub(LOW_BITS) & !word & HIGH_BITS != 0
 }
 
+fn find_byte(s: &[i8], byte: i8) -> Option<usize> {
+    let bytes: &[u8] = bytemuck::cast_slice(s);
+    let byte = byte as u8;
+    let repeated_byte = LOW_BITS * usize::from(byte);
+    let mut chunks = bytes.chunks_exact(WORD_BYTES);
+
+    for (index, chunk) in chunks.by_ref().enumerate() {
+        let word = usize::from_ne_bytes(chunk.try_into().unwrap());
+        if has_null_byte(word) || has_null_byte(word ^ repeated_byte) {
+            for (offset, &current) in chunk.iter().enumerate() {
+                if current == byte {
+                    return Some(index * WORD_BYTES + offset);
+                }
+                if current == 0 {
+                    return None;
+                }
+            }
+        }
+    }
+
+    let remainder_start = bytes.len() - chunks.remainder().len();
+    for (offset, &current) in chunks.remainder().iter().enumerate() {
+        if current == byte {
+            return Some(remainder_start + offset);
+        }
+        if current == 0 {
+            return None;
+        }
+    }
+
+    None
+}
+
+fn rfind_byte(s: &[i8], byte: i8) -> Option<usize> {
+    let bytes: &[u8] = bytemuck::cast_slice(s);
+    let byte = byte as u8;
+    let repeated_byte = LOW_BITS * usize::from(byte);
+    let mut chunks = bytes.chunks_exact(WORD_BYTES);
+    let mut last = None;
+
+    for (index, chunk) in chunks.by_ref().enumerate() {
+        let word = usize::from_ne_bytes(chunk.try_into().unwrap());
+        if has_null_byte(word) || has_null_byte(word ^ repeated_byte) {
+            for (offset, &current) in chunk.iter().enumerate() {
+                if current == byte {
+                    last = Some(index * WORD_BYTES + offset);
+                }
+                if current == 0 {
+                    return last;
+                }
+            }
+        }
+    }
+
+    let remainder_start = bytes.len() - chunks.remainder().len();
+    for (offset, &current) in chunks.remainder().iter().enumerate() {
+        if current == byte {
+            last = Some(remainder_start + offset);
+        }
+        if current == 0 {
+            return last;
+        }
+    }
+
+    last
+}
+
 fn find_null(s: &[i8], n: usize) -> Option<usize> {
     let bytes: &[u8] = bytemuck::cast_slice(s);
     let bytes = &bytes[..n.min(bytes.len())];
@@ -121,6 +188,62 @@ pub fn strncat<'s>(s1: &'s mut [i8], s2: &[i8], n: usize) -> &'s mut [i8] {
 /// Returns the number of bytes preceding the first null byte in `s`.
 pub fn strlen(s: &[i8]) -> usize {
     find_null(s, s.len()).unwrap()
+}
+
+/// Finds `c`, converted to `i8`, in null-terminated `s` and returns its suffix, or `None` if not found.
+pub fn strchr(s: &[i8], c: i32) -> Option<&[i8]> {
+    find_byte(s, c as i8).map(|index| &s[index..])
+}
+
+/// Finds `c`, converted to `i8`, in null-terminated `s` and returns its mutable suffix, or `None` if not found.
+pub fn strchr_mut(s: &mut [i8], c: i32) -> Option<&mut [i8]> {
+    find_byte(s, c as i8).map(|index| &mut s[index..])
+}
+
+/// Finds the last `c`, converted to `i8`, in null-terminated `s` and returns its suffix, or `None` if not found.
+pub fn strrchr(s: &[i8], c: i32) -> Option<&[i8]> {
+    rfind_byte(s, c as i8).map(|index| &s[index..])
+}
+
+/// Finds the last `c`, converted to `i8`, in null-terminated `s` and returns its mutable suffix, or `None` if not found.
+pub fn strrchr_mut(s: &mut [i8], c: i32) -> Option<&mut [i8]> {
+    rfind_byte(s, c as i8).map(|index| &mut s[index..])
+}
+
+fn find_substring(s1: &[i8], s2: &[i8]) -> Option<usize> {
+    let s1_len = strlen(s1);
+    let s2_len = strlen(s2);
+
+    if s2_len == 0 {
+        return Some(0);
+    }
+    if s2_len > s1_len {
+        return None;
+    }
+
+    let first = s2[0];
+    let last_start = s1_len - s2_len;
+    let mut start = 0;
+
+    while start <= last_start {
+        start += find_byte(&s1[start..=last_start], first)?;
+        if s1[start..start + s2_len] == s2[..s2_len] {
+            return Some(start);
+        }
+        start += 1;
+    }
+
+    None
+}
+
+/// Finds null-terminated `s2` in null-terminated `s1` and returns its suffix, or `None` if not found.
+pub fn strstr<'s>(s1: &'s [i8], s2: &[i8]) -> Option<&'s [i8]> {
+    find_substring(s1, s2).map(|index| &s1[index..])
+}
+
+/// Finds null-terminated `s2` in null-terminated `s1` and returns its mutable suffix, or `None` if not found.
+pub fn strstr_mut<'s>(s1: &'s mut [i8], s2: &[i8]) -> Option<&'s mut [i8]> {
+    find_substring(s1, s2).map(|index| &mut s1[index..])
 }
 
 #[cfg(test)]

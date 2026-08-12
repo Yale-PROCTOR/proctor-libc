@@ -1,4 +1,7 @@
-use super::{strcat, strcmp, strcpy, strlen, strncat, strncmp, strncpy};
+use super::{
+    strcat, strchr, strchr_mut, strcmp, strcpy, strlen, strncat, strncmp, strncpy, strrchr,
+    strrchr_mut, strstr, strstr_mut,
+};
 
 fn i8s(bytes: &[u8]) -> &[i8] {
     bytemuck::cast_slice(bytes)
@@ -340,4 +343,247 @@ fn strncat_returns_the_complete_destination_slice() {
 
     assert_eq!(result.as_ptr(), pointer);
     assert_eq!(result.len(), length);
+}
+
+#[test]
+fn strchr_returns_the_suffix_at_the_first_match() {
+    assert_eq!(
+        strchr(i8s(b"abca\0tail"), b'a'.into()),
+        Some(i8s(b"abca\0tail"))
+    );
+    assert_eq!(
+        strchr(i8s(b"abca\0tail"), b'c'.into()),
+        Some(i8s(b"ca\0tail"))
+    );
+}
+
+#[test]
+fn strchr_does_not_search_after_the_null_byte() {
+    assert_eq!(strchr(i8s(b"abc\0d"), b'd'.into()), None);
+}
+
+#[test]
+fn strchr_stops_at_a_null_byte_before_a_match_in_a_complete_word() {
+    let mut s = vec![1; size_of::<usize>()];
+    s[0] = 0;
+    s[1] = 2;
+
+    assert_eq!(strchr(&s, 2), None);
+}
+
+#[test]
+fn strchr_can_find_the_null_byte() {
+    assert_eq!(strchr(i8s(b"abc\0tail"), 0), Some(i8s(b"\0tail")));
+}
+
+#[test]
+fn strchr_converts_c_to_i8() {
+    assert_eq!(strchr(&[-1, 0], 255), Some(&[-1, 0][..]));
+    assert_eq!(strchr(&[1, 0], 257), Some(&[1, 0][..]));
+}
+
+#[test]
+fn strchr_finds_bytes_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut s = vec![1; expected];
+        s.extend_from_slice(&[2, 0, 3]);
+
+        let result = strchr(&s, 2).unwrap();
+
+        assert_eq!(result.as_ptr(), s[expected..].as_ptr());
+        assert_eq!(result, &s[expected..]);
+    }
+}
+
+#[test]
+fn strchr_mut_returns_a_mutable_suffix() {
+    let mut s = i8s(b"abc\0tail").to_vec();
+
+    let result = strchr_mut(&mut s, b'b'.into()).unwrap();
+    result[0] = b'B' as i8;
+
+    assert_eq!(s, i8s(b"aBc\0tail"));
+}
+
+#[test]
+fn strchr_mut_returns_none_without_modifying_s() {
+    let mut s = i8s(b"abc\0tail").to_vec();
+
+    assert_eq!(strchr_mut(&mut s, b'd'.into()), None);
+    assert_eq!(s, i8s(b"abc\0tail"));
+}
+
+#[test]
+fn strchr_mut_can_find_the_null_byte() {
+    let mut s = i8s(b"abc\0tail").to_vec();
+
+    let result = strchr_mut(&mut s, 0).unwrap();
+    result[1] = b'T' as i8;
+
+    assert_eq!(s, i8s(b"abc\0Tail"));
+}
+
+#[test]
+fn strrchr_returns_the_suffix_at_the_last_match() {
+    assert_eq!(
+        strrchr(i8s(b"abca\0tail"), b'a'.into()),
+        Some(i8s(b"a\0tail"))
+    );
+    assert_eq!(
+        strrchr(i8s(b"abca\0tail"), b'b'.into()),
+        Some(i8s(b"bca\0tail"))
+    );
+}
+
+#[test]
+fn strrchr_does_not_search_after_the_null_byte() {
+    let mut s = vec![1; size_of::<usize>()];
+    s[0] = 0;
+    s[1] = 2;
+
+    assert_eq!(strrchr(&s, 2), None);
+}
+
+#[test]
+fn strrchr_can_find_the_null_byte() {
+    assert_eq!(strrchr(i8s(b"abc\0tail\0"), 0), Some(i8s(b"\0tail\0")));
+}
+
+#[test]
+fn strrchr_converts_c_to_i8() {
+    assert_eq!(strrchr(&[-1, 1, -1, 0], 255), Some(&[-1, 0][..]));
+    assert_eq!(strrchr(&[1, 2, 1, 0], 257), Some(&[1, 0][..]));
+}
+
+#[test]
+fn strrchr_finds_bytes_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut s = vec![1; expected];
+        s.extend_from_slice(&[2, 0, 3]);
+
+        let result = strrchr(&s, 2).unwrap();
+
+        assert_eq!(result.as_ptr(), s[expected..].as_ptr());
+        assert_eq!(result, &s[expected..]);
+    }
+}
+
+#[test]
+fn strrchr_returns_none_when_the_byte_is_not_found() {
+    assert_eq!(strrchr(i8s(b"abc\0tail"), b'd'.into()), None);
+}
+
+#[test]
+fn strrchr_mut_returns_a_mutable_suffix() {
+    let mut s = i8s(b"abcabc\0tail").to_vec();
+
+    let result = strrchr_mut(&mut s, b'b'.into()).unwrap();
+    result[0] = b'B' as i8;
+
+    assert_eq!(s, i8s(b"abcaBc\0tail"));
+}
+
+#[test]
+fn strrchr_mut_handles_null_and_missing_bytes() {
+    let mut null_target = i8s(b"abc\0tail").to_vec();
+    let result = strrchr_mut(&mut null_target, 0).unwrap();
+    result[1] = b'T' as i8;
+    assert_eq!(null_target, i8s(b"abc\0Tail"));
+
+    let mut missing = i8s(b"abc\0tail").to_vec();
+    assert_eq!(strrchr_mut(&mut missing, b'd'.into()), None);
+    assert_eq!(missing, i8s(b"abc\0tail"));
+}
+
+#[test]
+fn strstr_returns_the_suffix_at_the_first_match() {
+    assert_eq!(
+        strstr(i8s(b"abcabc\0tail"), i8s(b"bca\0ignored")),
+        Some(i8s(b"bcabc\0tail"))
+    );
+}
+
+#[test]
+fn strstr_returns_none_when_the_needle_is_not_found() {
+    assert_eq!(strstr(i8s(b"abc\0"), i8s(b"abd\0")), None);
+    assert_eq!(strstr(i8s(b"abc\0"), i8s(b"abcd\0")), None);
+}
+
+#[test]
+fn strstr_does_not_search_after_null_bytes() {
+    assert_eq!(strstr(i8s(b"abc\0def\0"), i8s(b"def\0")), None);
+    assert_eq!(
+        strstr(i8s(b"abcdef\0"), i8s(b"cd\0wrong")),
+        Some(i8s(b"cdef\0"))
+    );
+}
+
+#[test]
+fn strstr_with_an_empty_needle_returns_s1() {
+    let s1 = i8s(b"abc\0tail");
+
+    let result = strstr(s1, i8s(b"\0ignored")).unwrap();
+
+    assert_eq!(result.as_ptr(), s1.as_ptr());
+    assert_eq!(result.len(), s1.len());
+}
+
+#[test]
+fn strstr_handles_an_empty_haystack() {
+    assert_eq!(strstr(i8s(b"\0tail"), i8s(b"a\0")), None);
+    assert_eq!(
+        strstr(i8s(b"\0tail"), i8s(b"\0ignored")),
+        Some(i8s(b"\0tail"))
+    );
+}
+
+#[test]
+fn strstr_matches_high_bit_bytes() {
+    assert_eq!(strstr(&[1, -1, 2, 0], &[-1, 2, 0]), Some(&[-1, 2, 0][..]));
+}
+
+#[test]
+fn strstr_finds_matches_at_each_word_offset() {
+    for expected in 0..=size_of::<usize>() * 3 {
+        let mut s1 = vec![1; expected];
+        s1.extend_from_slice(&[2, 3, 0, 4]);
+
+        let result = strstr(&s1, &[2, 3, 0]).unwrap();
+
+        assert_eq!(result.as_ptr(), s1[expected..].as_ptr());
+        assert_eq!(result, &s1[expected..]);
+    }
+}
+
+#[test]
+fn strstr_checks_later_candidates_after_partial_matches() {
+    assert_eq!(
+        strstr(i8s(b"aaab\0tail"), i8s(b"aab\0")),
+        Some(i8s(b"aab\0tail"))
+    );
+}
+
+#[test]
+fn strstr_mut_returns_a_mutable_suffix() {
+    let mut s1 = i8s(b"abcabc\0tail").to_vec();
+
+    let result = strstr_mut(&mut s1, i8s(b"cab\0")).unwrap();
+    result[0] = b'C' as i8;
+
+    assert_eq!(s1, i8s(b"abCabc\0tail"));
+}
+
+#[test]
+fn strstr_mut_handles_empty_and_missing_needles() {
+    let mut empty_needle_haystack = i8s(b"abc\0tail").to_vec();
+    let pointer = empty_needle_haystack.as_ptr();
+    let length = empty_needle_haystack.len();
+
+    let result = strstr_mut(&mut empty_needle_haystack, i8s(b"\0ignored")).unwrap();
+    assert_eq!(result.as_ptr(), pointer);
+    assert_eq!(result.len(), length);
+
+    let mut missing_needle_haystack = i8s(b"abc\0tail").to_vec();
+    assert_eq!(strstr_mut(&mut missing_needle_haystack, i8s(b"d\0")), None);
+    assert_eq!(missing_needle_haystack, i8s(b"abc\0tail"));
 }
