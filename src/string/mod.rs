@@ -191,6 +191,21 @@ pub fn strlen(s: &[i8]) -> usize {
     find_null(s, s.len()).unwrap()
 }
 
+/// Duplicates the null-terminated byte string `s`.
+pub fn strdup(s: &[i8]) -> Box<[i8]> {
+    let length = strlen(s);
+    s[..=length].into()
+}
+
+/// Duplicates at most `n` bytes from `s` and appends a null byte.
+pub fn strndup(s: &[i8], n: usize) -> Box<[i8]> {
+    let length = find_null(s, n).unwrap_or(n);
+    let mut duplicate = Vec::with_capacity(length + 1);
+    duplicate.extend_from_slice(&s[..length]);
+    duplicate.push(0);
+    duplicate.into_boxed_slice()
+}
+
 /// Finds `c`, converted to `i8`, in null-terminated `s` and returns its suffix, or `None` if not found.
 pub fn strchr(s: &[i8], c: i32) -> Option<&[i8]> {
     find_byte(s, c as i8).map(|index| &s[index..])

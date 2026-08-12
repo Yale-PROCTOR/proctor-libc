@@ -1,6 +1,6 @@
 use super::{
-    strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strlen, strncat, strncmp, strncpy,
-    strrchr, strrchr_mut, strspn, strstr, strstr_mut,
+    strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup, strlen, strncat, strncmp, strncpy,
+    strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,
 };
 
 fn i8s(bytes: &[u8]) -> &[i8] {
@@ -35,6 +35,64 @@ fn strlen_finds_null_bytes_at_each_word_offset() {
         let mut s = vec![1; expected];
         s.extend_from_slice(&[0, 2]);
         assert_eq!(strlen(&s), expected);
+    }
+}
+
+#[test]
+fn strdup_copies_through_the_first_null_byte() {
+    assert_eq!(&*strdup(i8s(b"hello\0ignored")), i8s(b"hello\0"));
+}
+
+#[test]
+fn strdup_handles_an_empty_string() {
+    assert_eq!(&*strdup(i8s(b"\0ignored")), i8s(b"\0"));
+}
+
+#[test]
+fn strdup_finds_null_bytes_at_each_word_offset() {
+    for length in 0..=size_of::<usize>() * 3 {
+        let mut s = vec![-1; length];
+        s.extend_from_slice(&[0, 2]);
+
+        let result = strdup(&s);
+
+        assert_eq!(&result[..length], vec![-1; length]);
+        assert_eq!(result[length], 0);
+        assert_eq!(result.len(), length + 1);
+    }
+}
+
+#[test]
+fn strndup_copies_at_most_n_bytes_and_appends_a_null_byte() {
+    assert_eq!(&*strndup(i8s(b"abcdef"), 3), i8s(b"abc\0"));
+}
+
+#[test]
+fn strndup_stops_at_the_first_null_byte() {
+    assert_eq!(&*strndup(i8s(b"abc\0ignored"), usize::MAX), i8s(b"abc\0"));
+}
+
+#[test]
+fn strndup_accepts_n_bytes_without_a_null_byte() {
+    assert_eq!(&*strndup(i8s(b"abc"), 3), i8s(b"abc\0"));
+}
+
+#[test]
+fn strndup_with_zero_limit_reads_no_bytes() {
+    assert_eq!(&*strndup(&[], 0), i8s(b"\0"));
+}
+
+#[test]
+fn strndup_finds_null_bytes_at_each_word_offset() {
+    for length in 0..=size_of::<usize>() * 3 {
+        let mut s = vec![-1; length];
+        s.extend_from_slice(&[0, 2]);
+
+        let result = strndup(&s, usize::MAX);
+
+        assert_eq!(&result[..length], vec![-1; length]);
+        assert_eq!(result[length], 0);
+        assert_eq!(result.len(), length + 1);
     }
 }
 
