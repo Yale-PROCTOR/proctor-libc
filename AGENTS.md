@@ -10,6 +10,8 @@
   --all-targets` and resolve clippy warnings.
 * Place functions corresponding to \<stdio.h\> functions under
   `src/stdio/mod.rs`, and place relevant test cases under `src/stdio/tests.rs`.
+* Place functions corresponding to \<stdlib.h\> functions under
+  `src/stdlib/mod.rs`, and place relevant test cases under `src/stdlib/tests.rs`.
 * Each test case should not exhibit any actual file-system update.
 
 # Think Before Coding
