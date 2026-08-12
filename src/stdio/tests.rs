@@ -1,7 +1,9 @@
-use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::process::{Command, Stdio};
 
-use super::{fgetc, fgets, fputc, fputs, fread, fwrite, getchar, putchar, puts};
+use super::{
+    fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
+};
 
 const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
 
@@ -85,6 +87,98 @@ fn puts_stops_at_null_and_appends_a_newline() {
         &output.stdout,
         &[1, 2, b'\n', b'\n', 255, 128, b'\n']
     ));
+}
+
+#[test]
+fn fseek_repositions_from_the_start_current_position_and_end() {
+    let mut stream = Cursor::new([0; 8]);
+
+    assert_eq!(fseek(&mut stream, SeekFrom::Start(3)).unwrap(), 0);
+    assert_eq!(stream.position(), 3);
+    assert_eq!(fseek(&mut stream, SeekFrom::Current(2)).unwrap(), 0);
+    assert_eq!(stream.position(), 5);
+    assert_eq!(fseek(&mut stream, SeekFrom::End(-1)).unwrap(), 0);
+    assert_eq!(stream.position(), 7);
+}
+
+#[test]
+fn fseek_allows_positions_beyond_the_end() {
+    let mut stream = Cursor::new([0; 8]);
+
+    assert_eq!(fseek(&mut stream, SeekFrom::Start(12)).unwrap(), 0);
+    assert_eq!(ftell(&mut stream).unwrap(), 12);
+}
+
+#[test]
+fn ftell_returns_the_current_position_without_changing_it() {
+    let mut stream = Cursor::new([0; 8]);
+    stream.set_position(5);
+
+    assert_eq!(ftell(&mut stream).unwrap(), 5);
+    assert_eq!(stream.position(), 5);
+}
+
+#[test]
+fn rewind_sets_the_position_to_the_beginning() {
+    let mut stream = Cursor::new([0; 8]);
+    stream.set_position(5);
+
+    rewind(&mut stream).unwrap();
+
+    assert_eq!(stream.position(), 0);
+}
+
+#[test]
+fn seek_functions_accept_dynamically_sized_streams() {
+    let mut bytes = Cursor::new([0; 8]);
+    let stream: &mut dyn Seek = &mut bytes;
+
+    assert_eq!(fseek(stream, SeekFrom::Start(6)).unwrap(), 0);
+    assert_eq!(ftell(stream).unwrap(), 6);
+    rewind(stream).unwrap();
+    assert_eq!(ftell(stream).unwrap(), 0);
+}
+
+#[test]
+fn seek_functions_propagate_seek_errors() {
+    struct FailingSeek;
+
+    impl Seek for FailingSeek {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Err(io::Error::other("seek failed"))
+        }
+    }
+
+    for error in [
+        fseek(&mut FailingSeek, SeekFrom::Start(1)).unwrap_err(),
+        ftell(&mut FailingSeek).unwrap_err(),
+        rewind(&mut FailingSeek).unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(error.to_string(), "seek failed");
+    }
+}
+
+#[test]
+fn fseek_and_ftell_accept_i64_max_and_reject_larger_positions() {
+    struct PositionSeek(u64);
+
+    impl Seek for PositionSeek {
+        fn seek(&mut self, _pos: SeekFrom) -> io::Result<u64> {
+            Ok(self.0)
+        }
+    }
+
+    let mut maximum = PositionSeek(i64::MAX as u64);
+    assert_eq!(fseek(&mut maximum, SeekFrom::Start(0)).unwrap(), 0);
+    assert_eq!(ftell(&mut maximum).unwrap(), i64::MAX);
+
+    let mut too_large = PositionSeek(i64::MAX as u64 + 1);
+    let fseek_error = fseek(&mut too_large, SeekFrom::Start(0)).unwrap_err();
+    let ftell_error = ftell(&mut too_large).unwrap_err();
+
+    assert_eq!(fseek_error.kind(), io::ErrorKind::InvalidData);
+    assert_eq!(ftell_error.kind(), io::ErrorKind::InvalidData);
 }
 
 #[test]

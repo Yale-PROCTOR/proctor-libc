@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Read, Write};
+use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::{mem, ptr};
 
 /// Reads the next byte from `r`.
@@ -31,8 +31,7 @@ pub fn fputc<W: Write + ?Sized>(c: i32, w: &mut W) -> io::Result<i32> {
 
 /// Writes the bytes in `buf` preceding the first null byte to `w`.
 ///
-/// If `buf` has no null byte, writes the entire slice. Returns zero on success
-/// or an I/O error.
+/// Returns zero on success or an I/O error.
 pub fn fputs<W: Write + ?Sized>(buf: &[i8], w: &mut W) -> io::Result<i32> {
     let len = buf.iter().position(|&byte| byte == 0).unwrap_or(buf.len());
     let mut bytes: &[u8] = bytemuck::cast_slice(&buf[..len]);
@@ -71,8 +70,7 @@ pub fn putchar(c: i32) -> io::Result<i32> {
 /// Writes the bytes in `buf` preceding the first null byte, followed by a
 /// newline, to standard output.
 ///
-/// If `buf` has no null byte, writes the entire slice. Returns zero on success
-/// or an I/O error.
+/// Returns zero on success or an I/O error.
 pub fn puts(buf: &[i8]) -> io::Result<i32> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
@@ -81,6 +79,36 @@ pub fn puts(buf: &[i8]) -> io::Result<i32> {
     fputc(i32::from(b'\n'), &mut stdout)?;
 
     Ok(0)
+}
+
+/// Sets the position of `s` according to `pos`.
+///
+/// Returns zero on success or an I/O error.
+pub fn fseek<S: Seek + ?Sized>(s: &mut S, pos: SeekFrom) -> io::Result<i32> {
+    i64::try_from(s.seek(pos)?).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream position does not fit in i64",
+        )
+    })?;
+
+    Ok(0)
+}
+
+/// Returns the current position of `s` as a byte offset from its beginning.
+pub fn ftell<S: Seek + ?Sized>(s: &mut S) -> io::Result<i64> {
+    i64::try_from(s.stream_position()?).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stream position does not fit in i64",
+        )
+    })
+}
+
+/// Sets the position of `s` to its beginning.
+pub fn rewind<S: Seek + ?Sized>(s: &mut S) -> io::Result<()> {
+    fseek(s, SeekFrom::Start(0))?;
+    Ok(())
 }
 
 /// Reads a line from `r` into `buf`, including the newline and a trailing null byte.
