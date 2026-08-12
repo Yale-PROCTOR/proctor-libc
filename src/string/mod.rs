@@ -1,3 +1,5 @@
+//! Safe equivalents of functions declared in C's `string.h` header.
+
 use std::mem;
 
 const WORD_BYTES: usize = mem::size_of::<usize>();

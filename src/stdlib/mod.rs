@@ -1,3 +1,5 @@
+//! Safe equivalents of functions declared in C's `stdlib.h` header.
+
 use num_bigint::BigUint;
 
 /// An integer conversion error.
@@ -115,7 +117,7 @@ pub fn strtof(buf: &[i8]) -> ((f32, &[i8]), Result<(), StrtoFloatError>) {
     ((f32::from_bits(bits as u32), suffix), status)
 }
 
-/// Converts the initial floating-point number in `buf` to `f128::f128`.
+/// Converts the initial floating-point number in `buf` to [`struct@f128::f128`].
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
 /// status. `StrtoFloatError::OutOfRange` is the only error variant and reports

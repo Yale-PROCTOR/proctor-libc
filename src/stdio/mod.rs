@@ -1,3 +1,5 @@
+//! Safe equivalents of functions declared in C's `stdio.h` header.
+
 use std::io::{self, BufRead, Read, Seek, SeekFrom, Write};
 use std::{mem, ptr};
 

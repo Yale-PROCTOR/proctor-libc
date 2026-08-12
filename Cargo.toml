@@ -2,6 +2,15 @@
 name = "proctor-libc"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Safe, Rust-idiomatic equivalents of libc functions"
+repository = "https://github.com/Yale-PROCTOR/proctor-libc.git"
+documentation = "https://docs.rs/proctor-libc"
+readme = "README.md"
+license = "MIT"
+keywords = ["libc", "c", "safe", "standard-library"]
+categories = ["api-bindings"]
+exclude = ["AGENTS.md", "rust-toolchain"]
 
 [dependencies]
 bytemuck = "1.25.2"
