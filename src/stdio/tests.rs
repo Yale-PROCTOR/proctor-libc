@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::printf::{fixed, fixed_upper, signed, unsigned};
+use super::printf::{fixed, fixed_upper, scientific, signed, unsigned};
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
@@ -360,6 +360,241 @@ proptest! {
                     .expect("finite nonzero precision has a radix point");
                 prop_assert_eq!(fraction.len(), precision);
                 prop_assert!(fraction.bytes().all(|byte| byte.is_ascii_digit()));
+            }
+        }
+    }
+}
+
+#[test]
+fn scientific_formats_every_supported_type_without_conversion_at_the_call_site() {
+    assert_eq!(format!("{:e}", scientific(1.25_f32)), "1.250000e+00");
+    assert_eq!(format!("{:e}", scientific(1.25_f64)), "1.250000e+00");
+    assert_eq!(
+        format!("{:e}", scientific(f128::f128::new(1.25_f64))),
+        "1.250000e+00"
+    );
+
+    assert_eq!(format!("{:E}", scientific(1.25_f32)), "1.250000E+00");
+    assert_eq!(format!("{:E}", scientific(1.25_f64)), "1.250000E+00");
+    assert_eq!(
+        format!("{:E}", scientific(f128::f128::new(1.25_f64))),
+        "1.250000E+00"
+    );
+}
+
+#[test]
+fn scientific_precision_rounds_to_nearest_with_ties_to_even_and_carries() {
+    for output in [
+        format!("{:.0e}", scientific(2.5_f32)),
+        format!("{:.0e}", scientific(2.5_f64)),
+        format!("{:.0e}", scientific(f128::f128::new(2.5_f64))),
+    ] {
+        assert_eq!(output, "2e+00");
+    }
+    for output in [
+        format!("{:.0e}", scientific(3.5_f32)),
+        format!("{:.0e}", scientific(3.5_f64)),
+        format!("{:.0e}", scientific(f128::f128::new(3.5_f64))),
+    ] {
+        assert_eq!(output, "4e+00");
+    }
+
+    assert_eq!(format!("{:.2e}", scientific(1.125_f64)), "1.12e+00");
+    assert_eq!(format!("{:.2e}", scientific(1.375_f64)), "1.38e+00");
+    assert_eq!(format!("{:.0e}", scientific(9.5_f64)), "1e+01");
+    assert_eq!(format!("{:.2e}", scientific(9.999_f64)), "1.00e+01");
+    assert_eq!(
+        format!("{:.2e}", scientific(f128::f128::parse("9.999").unwrap())),
+        "1.00e+01"
+    );
+}
+
+#[test]
+fn scientific_decimal_exponents_are_exact_at_boundaries() {
+    assert_eq!(format!("{:.6e}", scientific(0.1_f32)), "1.000000e-01");
+    assert_eq!(format!("{:.6e}", scientific(10.0_f32)), "1.000000e+01");
+    assert_eq!(format!("{:.6e}", scientific(0.0_f64)), "0.000000e+00");
+    assert_eq!(format!("{:.6e}", scientific(0.1_f64)), "1.000000e-01");
+    assert_eq!(format!("{:.6e}", scientific(1.0_f64)), "1.000000e+00");
+    assert_eq!(format!("{:.6e}", scientific(10.0_f64)), "1.000000e+01");
+    assert_eq!(format!("{:.6e}", scientific(1.0e100_f64)), "1.000000e+100");
+    assert_eq!(format!("{:.6e}", scientific(1.0e-100_f64)), "1.000000e-100");
+    assert_eq!(
+        format!("{:.6e}", scientific(f128::f128::parse("1e1000").unwrap())),
+        "1.000000e+1000"
+    );
+    assert_eq!(
+        format!("{:.6e}", scientific(f128::f128::parse("1e-1000").unwrap())),
+        "1.000000e-1000"
+    );
+
+    let below_one = f64::from_bits(1.0_f64.to_bits() - 1);
+    let above_one = f64::from_bits(1.0_f64.to_bits() + 1);
+    assert_eq!(
+        format!("{:.17e}", scientific(below_one)),
+        "9.99999999999999889e-01"
+    );
+    assert_eq!(
+        format!("{:.17e}", scientific(above_one)),
+        "1.00000000000000022e+00"
+    );
+}
+
+#[test]
+fn scientific_sign_flags_and_negative_zero_follow_printf() {
+    assert_eq!(format!("{:e}", scientific(0.0_f64)), "0.000000e+00");
+    assert_eq!(format!("{:e}", scientific(-0.0_f64)), "-0.000000e+00");
+    assert_eq!(format!("{:+e}", scientific(0.0_f64)), "+0.000000e+00");
+    assert_eq!(
+        format!("{:e}", scientific(0.0_f64).space_sign()),
+        " 0.000000e+00"
+    );
+    assert_eq!(
+        format!("{:+e}", scientific(0.0_f64).space_sign()),
+        "+0.000000e+00"
+    );
+    assert_eq!(
+        format!("{:e}", scientific(-0.0_f64).space_sign()),
+        "-0.000000e+00"
+    );
+    assert_eq!(
+        format!("{:E}", scientific(f128::f128::NEG_ZERO)),
+        "-0.000000E+00"
+    );
+}
+
+#[test]
+fn scientific_width_alignment_zero_padding_and_alternate_form_follow_printf() {
+    assert_eq!(format!("{:12.2e}", scientific(1.25_f64)), "    1.25e+00");
+    assert_eq!(format!("{:<12.2e}", scientific(1.25_f64)), "1.25e+00    ");
+    assert_eq!(format!("{:012.2e}", scientific(-1.25_f64)), "-0001.25e+00");
+    assert_eq!(format!("{:+012.2e}", scientific(1.25_f64)), "+0001.25e+00");
+    assert_eq!(
+        format!("{:012.2e}", scientific(1.25_f64).space_sign()),
+        " 0001.25e+00"
+    );
+    assert_eq!(format!("{:<012.2e}", scientific(1.25_f64)), "1.25e+00    ");
+    assert_eq!(format!("{:#.0e}", scientific(2.0_f64)), "2.e+00");
+    assert_eq!(format!("{:.0E}", scientific(2.0_f64)), "2E+00");
+    assert_eq!(format!("{:#012.0e}", scientific(2.0_f64)), "0000002.e+00");
+    assert_eq!(format!("{:<#012.0e}", scientific(2.0_f64)), "2.e+00      ");
+}
+
+#[test]
+fn scientific_handles_finite_extrema_subnormals_and_exponent_widths() {
+    assert_eq!(
+        format!("{:.6e}", scientific(f32::from_bits(1))),
+        "1.401298e-45"
+    );
+    assert_eq!(format!("{:.6e}", scientific(f32::MAX)), "3.402823e+38");
+    assert_eq!(
+        format!("{:.6e}", scientific(f64::from_bits(1))),
+        "4.940656e-324"
+    );
+    assert_eq!(format!("{:.6e}", scientific(f64::MAX)), "1.797693e+308");
+    assert_eq!(
+        format!("{:.6e}", scientific(f128::f128::MIN_POSITIVE_SUBNORMAL)),
+        "6.475175e-4966"
+    );
+    assert_eq!(
+        format!("{:.6e}", scientific(f128_from_bits(1_u128 << 112))),
+        "3.362103e-4932"
+    );
+    assert_eq!(
+        format!("{:.6E}", scientific(f128::f128::MAX)),
+        "1.189731E+4932"
+    );
+}
+
+#[test]
+fn scientific_nonfinite_spelling_signs_and_padding_follow_printf() {
+    assert_eq!(format!("{:e}", scientific(f64::INFINITY)), "inf");
+    assert_eq!(format!("{:e}", scientific(f64::NEG_INFINITY)), "-inf");
+    assert_eq!(format!("{:e}", scientific(f64::NAN)), "nan");
+    assert_eq!(format!("{:E}", scientific(f64::INFINITY)), "INF");
+    assert_eq!(format!("{:E}", scientific(f64::NEG_INFINITY)), "-INF");
+    assert_eq!(format!("{:E}", scientific(f64::NAN)), "NAN");
+    assert_eq!(format!("{:+e}", scientific(f64::INFINITY)), "+inf");
+    assert_eq!(format!("{:e}", scientific(f64::NAN).space_sign()), " nan");
+    assert_eq!(format!("{:08e}", scientific(f64::INFINITY)), "     inf");
+    assert_eq!(format!("{:<8E}", scientific(f64::NAN)), "NAN     ");
+
+    assert_eq!(format!("{:e}", scientific(f128::f128::INFINITY)), "inf");
+    assert_eq!(
+        format!("{:E}", scientific(f128::f128::NEG_INFINITY)),
+        "-INF"
+    );
+    assert_eq!(format!("{:e}", scientific(f128::f128::NAN)), "nan");
+}
+
+#[test]
+fn scientific_large_width_and_precision_are_complete() {
+    let precise = format!("{:.129e}", scientific(1.25_f64));
+    assert_eq!(precise.len(), 135);
+    assert!(precise.starts_with("1.25"));
+    assert!(precise.ends_with("e+00"));
+
+    let padded = format!("{:200.129e}", scientific(-1.25_f64));
+    assert_eq!(padded.len(), 200);
+    assert!(padded.starts_with(&" ".repeat(64)));
+    assert!(padded.ends_with(&format!("-{precise}")));
+}
+
+#[test]
+fn scientific_is_consistent_across_exact_cross_type_conversions() {
+    for value in [-16.0_f32, -1.25, -0.0, 0.0, 1.25, 16.0, 65_536.0] {
+        let as_f64 = f64::from(value);
+        let as_f128 = f128::f128::new(as_f64);
+        for precision in [0, 1, 2, 6, 20] {
+            let from_f32 = format!("{value:.precision$e}", value = scientific(value));
+            let from_f64 = format!("{value:.precision$e}", value = scientific(as_f64));
+            let from_f128 = format!("{value:.precision$e}", value = scientific(as_f128));
+            assert_eq!(from_f32, from_f64);
+            assert_eq!(from_f64, from_f128);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(f128_invariant_config())]
+
+    // Host `%Le` is deliberately not used as an oracle because its ABI may
+    // not be IEEE binary128.
+    #[test]
+    fn generated_f128_values_satisfy_scientific_format_invariants(
+        bits in any::<u128>(),
+        precision in 0_usize..=20,
+    ) {
+        let value = f128_from_bits(bits);
+        let lower = format!("{value:.precision$e}", value = scientific(value));
+        let upper = format!("{value:.precision$E}", value = scientific(value));
+        prop_assert_eq!(lower.to_ascii_uppercase(), upper.as_str());
+
+        let negative = bits >> 127 != 0;
+        prop_assert_eq!(lower.starts_with('-'), negative);
+
+        let exponent_field = (bits >> 112) & 0x7fff;
+        if exponent_field != 0x7fff {
+            let magnitude = lower.strip_prefix('-').unwrap_or(&lower);
+            let (mantissa, exponent) = magnitude
+                .split_once('e')
+                .expect("finite scientific output has an exponent marker");
+            prop_assert!(matches!(exponent.as_bytes().first(), Some(b'+') | Some(b'-')));
+            prop_assert!(exponent[1..].len() >= 2);
+            prop_assert!(exponent[1..].bytes().all(|byte| byte.is_ascii_digit()));
+            if precision == 0 {
+                prop_assert!(!mantissa.contains('.'));
+                prop_assert_eq!(mantissa.len(), 1);
+            } else {
+                let (integer, fraction) = mantissa
+                    .split_once('.')
+                    .expect("nonzero precision has a radix point");
+                prop_assert_eq!(integer.len(), 1);
+                prop_assert_eq!(fraction.len(), precision);
+                prop_assert!(mantissa
+                    .bytes()
+                    .filter(|&byte| byte != b'.')
+                    .all(|byte| byte.is_ascii_digit()));
             }
         }
     }

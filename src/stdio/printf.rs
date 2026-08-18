@@ -226,6 +226,107 @@
 //! // Native Rust uses `inf`/`NaN`, which does not cover both C spellings.
 //! ```
 //!
+//! Use [`scientific`] with Rust's `e` or `E` formatting trait for C's `e` or
+//! `E` conversion. The wrapper is always required: Rust's native exponent
+//! formatting does not guarantee C's `+` on a nonnegative exponent or its
+//! minimum of two exponent digits. A missing precision still means six digits
+//! after the radix point:
+//!
+//! ```
+//! use proctor_libc::printf::scientific;
+//!
+//! // printf("%e %E", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{:e} {:E}", scientific(1.25_f64), scientific(1.25_f64)),
+//!     "1.250000e+00 1.250000E+00",
+//! );
+//! // printf("%le %lE", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{:e} {:E}", scientific(1.25_f64), scientific(1.25_f64)),
+//!     "1.250000e+00 1.250000E+00",
+//! );
+//! ```
+//!
+//! C promotes `float` to `double`. Binary128 supplies the project's intended
+//! `%Le` and `%LE` behavior without assuming that the host `long double` has a
+//! compatible ABI:
+//!
+//! ```
+//! use proctor_libc::printf::scientific;
+//!
+//! let float_value = 1.25_f32;
+//! // printf("%e %E", (double)float_value, (double)float_value);
+//! assert_eq!(
+//!     format!("{:e} {:E}", scientific(float_value), scientific(float_value)),
+//!     "1.250000e+00 1.250000E+00",
+//! );
+//!
+//! let long_double_value = f128::f128::new(1.25_f64);
+//! // Intended equivalents: printf("%Le %LE", long_double_value, long_double_value);
+//! assert_eq!(
+//!     format!(
+//!         "{:e} {:E}",
+//!         scientific(long_double_value),
+//!         scientific(long_double_value),
+//!     ),
+//!     "1.250000e+00 1.250000E+00",
+//! );
+//! ```
+//!
+//! Precision, width, left alignment, sign, alternate form, and zero padding
+//! map to the corresponding C precision, `width`, `-`, `+`, `#`, and `0`:
+//!
+//! ```
+//! use proctor_libc::printf::scientific;
+//!
+//! // printf("%.2e %.0E %#.0e", 1.25, 1.5, 2.0);
+//! assert_eq!(
+//!     format!(
+//!         "{:.2e} {:.0E} {:#.0e}",
+//!         scientific(1.25_f64),
+//!         scientific(1.5_f64),
+//!         scientific(2.0_f64),
+//!     ),
+//!     "1.25e+00 2E+00 2.e+00",
+//! );
+//! // printf("%12.2e %-12.2e", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{:12.2e} {:<12.2e}", scientific(1.25_f64), scientific(1.25_f64)),
+//!     "    1.25e+00 1.25e+00    ",
+//! );
+//! // printf("%+012.2e %-012.2e", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{:+012.2e} {:<012.2e}", scientific(1.25_f64), scientific(1.25_f64)),
+//!     "+0001.25e+00 1.25e+00    ",
+//! );
+//! ```
+//!
+//! Call [`Scientific::space_sign`] for C's space flag. Rust's `+` flag takes
+//! precedence:
+//!
+//! ```
+//! use proctor_libc::printf::scientific;
+//!
+//! // printf("% e %+ e", 1.25, 1.25);
+//! assert_eq!(
+//!     format!(
+//!         "{:e} {:+e}",
+//!         scientific(1.25_f64).space_sign(),
+//!         scientific(1.25_f64).space_sign(),
+//!     ),
+//!     " 1.250000e+00 +1.250000e+00",
+//! );
+//! ```
+//!
+//! [`Scientific`] intentionally does not implement [`std::fmt::Display`]; the
+//! source conversion must select lowercase or uppercase exponent formatting:
+//!
+//! ```compile_fail
+//! use proctor_libc::printf::scientific;
+//!
+//! let _ = format!("{}", scientific(1.25_f64));
+//! ```
+//!
 //! Floating formatting uses the C locale's `.` radix character and
 //! round-to-nearest, ties-to-even. It does not track an active process locale
 //! or floating-point rounding mode. Binary128 formatting is tested directly
@@ -280,7 +381,8 @@ pub trait SignedValue: private::SealedSigned {}
 /// `usize`.
 pub trait UnsignedValue: private::SealedUnsigned {}
 
-/// A primitive floating-point value accepted by [`fixed`] and [`fixed_upper`].
+/// A primitive floating-point value accepted by [`fixed`], [`fixed_upper`],
+/// and [`scientific`].
 ///
 /// This sealed trait is implemented for `f32`, `f64`, and
 /// [`struct@f128::f128`].
@@ -525,6 +627,57 @@ impl<T: FixedValue> fmt::Display for FixedUpper<T> {
     }
 }
 
+/// Wraps a floating-point primitive for C `printf`-compatible `e` or `E`
+/// formatting.
+///
+/// Format the returned wrapper with Rust's `e` or `E` trait to select the
+/// conversion case. It intentionally does not implement [`fmt::Display`]. See
+/// the [module documentation](self) for paired Rust and C examples of every
+/// supported type, spelling, and flag.
+pub fn scientific<T: FixedValue>(value: T) -> Scientific<T> {
+    Scientific {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` scientific formatting.
+#[derive(Clone, Copy)]
+pub struct Scientific<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> Scientific<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{:e}", scientific(1.25_f32).space_sign())` is equivalent to
+    /// `printf("% e", (double)1.25f)`, while formatting the same wrapper with
+    /// `{:+e}` is equivalent to `printf("%+ e", (double)1.25f)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::LowerExp for Scientific<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_scientific(
+            f,
+            FloatParts::from_value(self.value),
+            self.space_sign,
+            false,
+        )
+    }
+}
+
+impl<T: FixedValue> fmt::UpperExp for Scientific<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_scientific(f, FloatParts::from_value(self.value), self.space_sign, true)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FloatParts {
     Finite {
@@ -619,6 +772,53 @@ fn write_fixed(
         ),
     };
 
+    write_float_field(f, negative, &body, finite, space_sign)
+}
+
+fn write_scientific(
+    f: &mut Formatter<'_>,
+    parts: FloatParts,
+    space_sign: bool,
+    uppercase: bool,
+) -> fmt::Result {
+    let (negative, body, finite) = match parts {
+        FloatParts::Finite {
+            negative,
+            significand,
+            binary_exponent,
+        } => (
+            negative,
+            scientific_body(
+                significand,
+                binary_exponent,
+                f.precision().unwrap_or(6),
+                f.alternate(),
+                uppercase,
+            ),
+            true,
+        ),
+        FloatParts::Infinite { negative } => (
+            negative,
+            if uppercase { "INF" } else { "inf" }.to_owned(),
+            false,
+        ),
+        FloatParts::Nan { negative } => (
+            negative,
+            if uppercase { "NAN" } else { "nan" }.to_owned(),
+            false,
+        ),
+    };
+
+    write_float_field(f, negative, &body, finite, space_sign)
+}
+
+fn write_float_field(
+    f: &mut Formatter<'_>,
+    negative: bool,
+    body: &str,
+    finite: bool,
+    space_sign: bool,
+) -> fmt::Result {
     let sign = if negative {
         "-"
     } else if f.sign_plus() {
@@ -647,8 +847,133 @@ fn write_fixed(
     if zero_padding {
         write_repeated(f, ZERO_PADDING, padding)?;
     }
-    f.write_str(&body)?;
+    f.write_str(body)?;
     write_repeated(f, SPACE_PADDING, right_spaces)
+}
+
+fn scientific_body(
+    significand: u128,
+    binary_exponent: i32,
+    precision: usize,
+    alternate: bool,
+    uppercase: bool,
+) -> String {
+    let mut decimal_exponent = if significand == 0 {
+        0
+    } else {
+        decimal_exponent(significand, binary_exponent)
+    };
+
+    let rounded = if decimal_exponent <= 0 {
+        let decimal_shift = precision + (-decimal_exponent) as usize;
+        scale_and_round(significand, binary_exponent, decimal_shift)
+    } else if precision >= decimal_exponent as usize {
+        scale_and_round(
+            significand,
+            binary_exponent,
+            precision - decimal_exponent as usize,
+        )
+    } else {
+        scale_down_and_round(
+            significand,
+            binary_exponent,
+            decimal_exponent as usize - precision,
+        )
+    };
+
+    let expected_digits = precision + 1;
+    let mut digits = rounded.to_str_radix(10);
+    match digits.len().cmp(&expected_digits) {
+        std::cmp::Ordering::Greater => {
+            decimal_exponent += 1;
+            digits.pop();
+        }
+        std::cmp::Ordering::Less => {
+            digits.insert_str(0, &"0".repeat(expected_digits - digits.len()));
+        }
+        std::cmp::Ordering::Equal => {}
+    }
+
+    let mut body = String::with_capacity(expected_digits + 8);
+    body.push_str(&digits[..1]);
+    if precision != 0 || alternate {
+        body.push('.');
+    }
+    body.push_str(&digits[1..]);
+    body.push(if uppercase { 'E' } else { 'e' });
+    if decimal_exponent < 0 {
+        body.push('-');
+    } else {
+        body.push('+');
+    }
+    let exponent_digits = decimal_exponent.unsigned_abs().to_string();
+    if exponent_digits.len() < 2 {
+        body.push('0');
+    }
+    body.push_str(&exponent_digits);
+    body
+}
+
+fn decimal_exponent(significand: u128, binary_exponent: i32) -> i32 {
+    debug_assert_ne!(significand, 0);
+    let highest_binary_exponent =
+        (u128::BITS - 1 - significand.leading_zeros()) as i32 + binary_exponent;
+    let mut exponent =
+        (f64::from(highest_binary_exponent) * std::f64::consts::LOG10_2).floor() as i32;
+
+    while compare_with_power_of_ten(significand, binary_exponent, exponent).is_lt() {
+        exponent -= 1;
+    }
+    while !compare_with_power_of_ten(significand, binary_exponent, exponent + 1).is_lt() {
+        exponent += 1;
+    }
+    exponent
+}
+
+fn compare_with_power_of_ten(
+    significand: u128,
+    binary_exponent: i32,
+    decimal_exponent: i32,
+) -> std::cmp::Ordering {
+    let mut left = BigUint::from(significand);
+    let mut right = BigUint::from(1_u8);
+
+    if binary_exponent >= 0 {
+        left <<= binary_exponent as usize;
+    } else {
+        right <<= (-binary_exponent) as usize;
+    }
+
+    if decimal_exponent >= 0 {
+        right *= pow_ten(decimal_exponent as usize);
+    } else {
+        left *= pow_ten((-decimal_exponent) as usize);
+    }
+    left.cmp(&right)
+}
+
+fn scale_down_and_round(significand: u128, binary_exponent: i32, decimal_places: usize) -> BigUint {
+    if significand == 0 {
+        return BigUint::from(0_u8);
+    }
+
+    let mut numerator = BigUint::from(significand);
+    let mut denominator = pow_five(decimal_places);
+    let binary_shift = i64::from(binary_exponent) - decimal_places as i64;
+    if binary_shift >= 0 {
+        numerator <<= binary_shift as usize;
+    } else {
+        denominator <<= (-binary_shift) as usize;
+    }
+
+    let quotient = &numerator / &denominator;
+    let remainder = numerator - &quotient * &denominator;
+    let twice_remainder = remainder << 1;
+    if twice_remainder > denominator || (twice_remainder == denominator && quotient.bit(0)) {
+        quotient + 1_u8
+    } else {
+        quotient
+    }
 }
 
 fn fixed_body(
@@ -723,6 +1048,10 @@ fn pow_five(mut exponent: usize) -> BigUint {
         }
     }
     result
+}
+
+fn pow_ten(exponent: usize) -> BigUint {
+    pow_five(exponent) << exponent
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

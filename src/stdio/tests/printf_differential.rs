@@ -1,12 +1,12 @@
-//! Differential tests for the integer and fixed-point `printf` formatting
-//! adapters.
+//! Differential tests for the integer, fixed-point, and scientific `printf`
+//! formatting adapters.
 
 use std::ffi::CStr;
 
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed};
 
-use super::{fixed, fixed_upper, signed, unsigned};
+use super::{fixed, fixed_upper, scientific, signed, unsigned};
 
 const BUFFER_SIZE: usize = 256;
 
@@ -56,8 +56,8 @@ macro_rules! define_oracle {
         ) {
             let mut buffer = [0 as libc::c_char; BUFFER_SIZE];
             // SAFETY: every caller supplies a static, NUL-terminated format
-            // containing exactly one integer conversion whose required
-            // variadic type is this function's concrete `$abi_type`. The
+            // containing exactly one conversion whose required variadic type
+            // is this function's concrete `$abi_type`. The
             // destination has `BUFFER_SIZE` writable elements. `check_result`
             // rejects errors and truncation before inspecting initialized data.
             let written = unsafe {
@@ -859,6 +859,242 @@ fn check_f64(value: f64) {
     fixed_matrix!(value, "f64");
 }
 
+macro_rules! scientific_matrix {
+    ($value:expr, $type_name:literal) => {{
+        let value = $value;
+        let abi_value = value as libc::c_double;
+
+        pair!(
+            oracle_c_double,
+            b"%e\0",
+            abi_value,
+            format!("{:e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%E\0",
+            abi_value,
+            format!("{:E}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%le\0",
+            abi_value,
+            format!("{:e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%lE\0",
+            abi_value,
+            format!("{:E}", scientific(value)),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%.0e\0",
+            abi_value,
+            format!("{:.0e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.1e\0",
+            abi_value,
+            format!("{:.1e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.2e\0",
+            abi_value,
+            format!("{:.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.6e\0",
+            abi_value,
+            format!("{:.6e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.17e\0",
+            abi_value,
+            format!("{:.17e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.0E\0",
+            abi_value,
+            format!("{:.0E}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.6E\0",
+            abi_value,
+            format!("{:.6E}", scientific(value)),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%+e\0",
+            abi_value,
+            format!("{:+e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% e\0",
+            abi_value,
+            format!("{:e}", scientific(value).space_sign()),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+ e\0",
+            abi_value,
+            format!("{:+e}", scientific(value).space_sign()),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+E\0",
+            abi_value,
+            format!("{:+E}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% E\0",
+            abi_value,
+            format!("{:E}", scientific(value).space_sign()),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%20.2e\0",
+            abi_value,
+            format!("{:20.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-20.2e\0",
+            abi_value,
+            format!("{:<20.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%020.2e\0",
+            abi_value,
+            format!("{:020.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-020.2e\0",
+            abi_value,
+            format!("{:<020.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+020.2e\0",
+            abi_value,
+            format!("{:+020.2e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% 020.2e\0",
+            abi_value,
+            format!("{:020.2e}", scientific(value).space_sign()),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%#.0e\0",
+            abi_value,
+            format!("{:#.0e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#20.0e\0",
+            abi_value,
+            format!("{:#20.0e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#020.0e\0",
+            abi_value,
+            format!("{:#020.0e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-#020.0e\0",
+            abi_value,
+            format!("{:<#020.0e}", scientific(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#.0E\0",
+            abi_value,
+            format!("{:#.0E}", scientific(value)),
+            $type_name,
+            value
+        );
+    }};
+}
+
+fn check_scientific_f32(value: f32) {
+    scientific_matrix!(value, "f32");
+}
+
+fn check_scientific_f64(value: f64) {
+    scientific_matrix!(value, "f64");
+}
+
 #[test]
 fn all_i8_values_match_libc() {
     for value in i8::MIN..=i8::MAX {
@@ -1190,6 +1426,75 @@ fn deterministic_f64_values_match_libc() {
     }
 }
 
+#[test]
+fn deterministic_f32_scientific_values_match_libc() {
+    for value in [
+        f32::NEG_INFINITY,
+        f32::MIN,
+        -1.0e20,
+        -10.0,
+        -9.999,
+        -1.0,
+        -0.1,
+        -0.0,
+        0.0,
+        f32::from_bits(1),
+        f32::MIN_POSITIVE,
+        0.1,
+        1.0,
+        1.125,
+        1.375,
+        2.5,
+        3.5,
+        9.5,
+        9.999,
+        10.0,
+        1.0e20,
+        f32::MAX,
+        f32::INFINITY,
+        f32::NAN,
+        f32::from_bits(f32::NAN.to_bits() | (1 << 31)),
+    ] {
+        check_scientific_f32(value);
+    }
+}
+
+#[test]
+fn deterministic_f64_scientific_values_match_libc() {
+    let below_one = f64::from_bits(1.0_f64.to_bits() - 1);
+    let above_one = f64::from_bits(1.0_f64.to_bits() + 1);
+    for value in [
+        f64::NEG_INFINITY,
+        -1.0e300,
+        -10.0,
+        -9.999,
+        -1.0,
+        -0.1,
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        0.1,
+        below_one,
+        1.0,
+        above_one,
+        1.125,
+        1.375,
+        2.5,
+        3.5,
+        9.5,
+        9.999,
+        10.0,
+        1.0e300,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+        f64::from_bits(f64::NAN.to_bits() | (1 << 63)),
+    ] {
+        check_scientific_f64(value);
+    }
+}
+
 fn proptest_config() -> Config {
     Config {
         cases: 512,
@@ -1229,5 +1534,13 @@ proptest! {
             })
     ) {
         check_f64(value);
+    }
+    #[test]
+    fn generated_f32_scientific_values_match_libc(bits in any::<u32>()) {
+        check_scientific_f32(f32::from_bits(bits));
+    }
+    #[test]
+    fn generated_f64_scientific_values_match_libc(bits in any::<u64>()) {
+        check_scientific_f64(f64::from_bits(bits));
     }
 }
