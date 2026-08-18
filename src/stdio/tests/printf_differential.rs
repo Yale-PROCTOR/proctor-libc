@@ -1,5 +1,5 @@
-//! Differential tests for the integer and floating-point `printf` formatting
-//! adapters.
+//! Differential tests for the integer, floating-point, and string `printf`
+//! formatting adapters.
 
 use std::ffi::CStr;
 
@@ -8,7 +8,9 @@ use proptest::test_runner::{Config, RngSeed};
 
 #[cfg(target_env = "gnu")]
 use super::hex_float;
-use super::{fixed, fixed_upper, general, general_upper, scientific, signed, unsigned};
+use super::{
+    byte_string, fixed, fixed_upper, general, general_upper, scientific, signed, unsigned,
+};
 
 const BUFFER_SIZE: usize = 256;
 
@@ -89,6 +91,7 @@ define_oracle!(oracle_c_ulonglong, libc::c_ulonglong);
 define_oracle!(oracle_ssize_t, libc::ssize_t);
 define_oracle!(oracle_size_t, libc::size_t);
 define_oracle!(oracle_c_double, libc::c_double);
+define_oracle!(oracle_c_string, *const libc::c_char);
 
 fn snprintf_c_double(c_format: &'static [u8], value: libc::c_double) -> String {
     let mut buffer = [0 as libc::c_char; BUFFER_SIZE];
@@ -1851,6 +1854,144 @@ fn dr_233_alternate_general_boundary_is_explicitly_checked_against_libc() {
     }
 }
 
+fn nul_terminated_i8(value: &[u8]) -> Vec<i8> {
+    value
+        .iter()
+        .copied()
+        .chain(std::iter::once(0))
+        .map(|byte| byte as i8)
+        .collect()
+}
+
+fn check_byte_string_whole(value: &[i8], label: &str) {
+    let pointer = value.as_ptr().cast::<libc::c_char>();
+    pair!(
+        oracle_c_string,
+        b"%s\0",
+        pointer,
+        format!("{}", byte_string(value)),
+        "&[i8]",
+        label
+    );
+    pair!(
+        oracle_c_string,
+        b"%12s\0",
+        pointer,
+        format!("{:12}", byte_string(value)),
+        "&[i8]",
+        label
+    );
+    pair!(
+        oracle_c_string,
+        b"%-12s\0",
+        pointer,
+        format!("{:<12}", byte_string(value)),
+        "&[i8]",
+        label
+    );
+}
+
+fn check_ascii_byte_string_matrix(value: &[i8]) {
+    check_byte_string_whole(value, "ASCII byte string");
+    let pointer = value.as_ptr().cast::<libc::c_char>();
+    pair!(
+        oracle_c_string,
+        b"%.0s\0",
+        pointer,
+        format!("{:.0}", byte_string(value)),
+        "&[i8]",
+        "ASCII byte string"
+    );
+    pair!(
+        oracle_c_string,
+        b"%.5s\0",
+        pointer,
+        format!("{:.5}", byte_string(value)),
+        "&[i8]",
+        "ASCII byte string"
+    );
+    pair!(
+        oracle_c_string,
+        b"%12.5s\0",
+        pointer,
+        format!("{:12.5}", byte_string(value)),
+        "&[i8]",
+        "ASCII byte string"
+    );
+    pair!(
+        oracle_c_string,
+        b"%-12.5s\0",
+        pointer,
+        format!("{:<12.5}", byte_string(value)),
+        "&[i8]",
+        "ASCII byte string"
+    );
+    pair!(
+        oracle_c_string,
+        b"%130.129s\0",
+        pointer,
+        format!("{:130.129}", byte_string(value)),
+        "&[i8]",
+        "ASCII byte string"
+    );
+}
+
+#[test]
+fn byte_string_static_formats_match_libc() {
+    for bytes in [
+        nul_terminated_i8(b""),
+        nul_terminated_i8(b"hello"),
+        nul_terminated_i8(b"a longer ASCII byte string"),
+        {
+            let mut embedded = nul_terminated_i8(b"before");
+            embedded.extend(nul_terminated_i8(b"after"));
+            embedded
+        },
+        nul_terminated_i8(&[b'x'; 160]),
+    ] {
+        check_ascii_byte_string_matrix(&bytes);
+    }
+
+    let multibyte = nul_terminated_i8("éclair".as_bytes());
+    check_byte_string_whole(&multibyte, "éclair");
+    let pointer = multibyte.as_ptr().cast::<libc::c_char>();
+    pair!(
+        oracle_c_string,
+        b"%.2s\0",
+        pointer,
+        format!("{:.2}", byte_string(&multibyte)),
+        "&[i8]",
+        "éclair"
+    );
+    pair!(
+        oracle_c_string,
+        b"%10.3s\0",
+        pointer,
+        format!("{:10.3}", byte_string(&multibyte)),
+        "&[i8]",
+        "éclair"
+    );
+    pair!(
+        oracle_c_string,
+        b"%-10.3s\0",
+        pointer,
+        format!("{:<10.3}", byte_string(&multibyte)),
+        "&[i8]",
+        "éclair"
+    );
+
+    // C may read exactly the precision bytes without a following NUL.
+    let bounded = [b'a' as i8, b'b' as i8, b'c' as i8];
+    pair!(
+        oracle_c_string,
+        b"%.3s\0",
+        bounded.as_ptr().cast(),
+        format!("{:.3}", byte_string(&bounded)),
+        "&[i8]",
+        "abc"
+    );
+}
+
 fn proptest_config() -> Config {
     Config {
         cases: 512,
@@ -1906,6 +2047,21 @@ proptest! {
     #[test]
     fn generated_f64_general_values_match_libc(bits in any::<u64>()) {
         check_general_f64(f64::from_bits(bits));
+    }
+    #[test]
+    fn generated_valid_utf8_byte_strings_match_libc(
+        characters in proptest::collection::vec(any::<char>(), 0..=32)
+    ) {
+        let text: String = characters.into_iter().collect();
+        let value = nul_terminated_i8(text.as_bytes());
+        check_byte_string_whole(&value, &text);
+    }
+    #[test]
+    fn generated_ascii_byte_string_format_matrix_matches_libc(
+        bytes in proptest::collection::vec(0_u8..=0x7f, 0..=128)
+    ) {
+        let value = nul_terminated_i8(&bytes);
+        check_ascii_byte_string_matrix(&value);
     }
 }
 

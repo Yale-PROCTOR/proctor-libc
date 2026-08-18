@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::printf::{
-    fixed, fixed_upper, general, general_upper, hex_float, scientific, signed, unsigned,
+    byte_string, fixed, fixed_upper, general, general_upper, hex_float, scientific, signed,
+    unsigned,
 };
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
@@ -984,6 +985,139 @@ proptest! {
                 prop_assert!(fraction.bytes().all(|byte| byte.is_ascii_hexdigit()));
             }
         }
+    }
+}
+
+fn c_string_bytes(value: &str) -> Vec<i8> {
+    value
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain(std::iter::once(0))
+        .map(|byte| byte as i8)
+        .collect()
+}
+
+#[test]
+fn byte_string_selects_ascii_bytes_through_the_first_nul() {
+    let value = [
+        b'h' as i8, b'e' as i8, b'l' as i8, b'l' as i8, b'o' as i8, 0,
+    ];
+    assert_eq!(format!("{}", byte_string(&value)), "hello");
+
+    let embedded = [b'o' as i8, b'k' as i8, 0, b'x' as i8, 0];
+    assert_eq!(format!("{}", byte_string(&embedded)), "ok");
+    assert_eq!(format!("{:.4}", byte_string(&embedded)), "ok");
+}
+
+#[test]
+fn byte_string_precision_can_bound_a_slice_without_a_nul() {
+    let value = [b'a' as i8, b'b' as i8, b'c' as i8, 0xff_u8 as i8];
+    assert_eq!(format!("{:.3}", byte_string(&value)), "abc");
+    assert_eq!(format!("{:.0}", byte_string(&value)), "");
+    assert_eq!(format!("{:.0}", byte_string(&[])), "");
+}
+
+#[test]
+fn byte_string_width_alignment_and_precision_count_bytes() {
+    let value = c_string_bytes("hello");
+    assert_eq!(format!("{:10}", byte_string(&value)), "     hello");
+    assert_eq!(format!("{:<10}", byte_string(&value)), "hello     ");
+    assert_eq!(format!("{:10.3}", byte_string(&value)), "       hel");
+    assert_eq!(format!("{:<10.3}", byte_string(&value)), "hel       ");
+
+    let multibyte = c_string_bytes("é!");
+    assert_eq!(
+        format!("{}", byte_string(&multibyte)).as_bytes(),
+        b"\xc3\xa9!"
+    );
+    assert_eq!(
+        format!("{:5}", byte_string(&multibyte)).as_bytes(),
+        b"  \xc3\xa9!"
+    );
+    assert_eq!(
+        format!("{:<5}", byte_string(&multibyte)).as_bytes(),
+        b"\xc3\xa9!  "
+    );
+    assert_eq!(
+        format!("{:.2}", byte_string(&multibyte)).as_bytes(),
+        b"\xc3\xa9"
+    );
+    assert_eq!(
+        format!("{:5.2}", byte_string(&multibyte)).as_bytes(),
+        b"   \xc3\xa9"
+    );
+}
+
+#[test]
+fn byte_string_handles_empty_large_fields_and_borrows_without_mutation() {
+    let empty = [0_i8];
+    assert_eq!(format!("{}", byte_string(&empty)), "");
+    assert_eq!(format!("{:130}", byte_string(&empty)), " ".repeat(130));
+
+    let value = c_string_bytes("chunked padding");
+    let before = value.clone();
+    let output = format!("{:200}", byte_string(&value));
+    assert_eq!(output.len(), 200);
+    assert!(output.starts_with(&" ".repeat(185)));
+    assert!(output.ends_with("chunked padding"));
+    assert_eq!(value, before);
+}
+
+fn byte_string_proptest_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: 512,
+        failure_persistence: None,
+        rng_seed: RngSeed::Fixed(0x4259_5445_5f53_5452),
+        ..ProptestConfig::default()
+    }
+}
+
+proptest! {
+    #![proptest_config(byte_string_proptest_config())]
+
+    #[test]
+    fn generated_valid_utf8_byte_strings_preserve_selected_bytes_and_byte_width(
+        characters in proptest::collection::vec(
+            prop_oneof![4 => any::<char>(), 1 => Just('\0')],
+            0..=32,
+        ),
+        boundary_selector in any::<usize>(),
+        width in 0_usize..=160,
+    ) {
+        let text: String = characters.into_iter().collect();
+        let value = c_string_bytes(&text);
+        let before = value.clone();
+        let bytes = text.as_bytes();
+        let nul = bytes.iter().position(|&byte| byte == 0).unwrap_or(bytes.len());
+        let selected_text = &text[..nul];
+
+        let output = format!("{wrapped:width$}", wrapped = byte_string(&value));
+        let expected_padding = width.saturating_sub(selected_text.len());
+        prop_assert_eq!(
+            output.as_bytes(),
+            [" ".repeat(expected_padding).as_bytes(), selected_text.as_bytes()].concat(),
+        );
+        let left_aligned = format!("{wrapped:<width$}", wrapped = byte_string(&value));
+        prop_assert_eq!(
+            left_aligned.as_bytes(),
+            [selected_text.as_bytes(), " ".repeat(expected_padding).as_bytes()].concat(),
+        );
+
+        let mut boundaries: Vec<usize> = selected_text.char_indices().map(|(index, _)| index).collect();
+        boundaries.push(selected_text.len());
+        let precision = boundaries[boundary_selector % boundaries.len()];
+        let selected = &selected_text.as_bytes()[..precision];
+        let precise = format!(
+            "{wrapped:width$.precision$}",
+            wrapped = byte_string(&value),
+        );
+        let precise_padding = width.saturating_sub(selected.len());
+        prop_assert_eq!(
+            precise.as_bytes(),
+            [" ".repeat(precise_padding).as_bytes(), selected].concat(),
+        );
+        prop_assert_eq!(value, before);
     }
 }
 

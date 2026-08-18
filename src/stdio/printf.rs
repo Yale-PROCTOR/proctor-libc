@@ -515,6 +515,61 @@
 //! let _ = format!("{}", hex_float(1.5_f64));
 //! ```
 //!
+//! Use [`byte_string`] for the `s` conversion when PROCTOR represents the C
+//! `char *` as an `i8` slice. It reinterprets each `i8` as the corresponding
+//! byte, stops at the first NUL, and uses C's byte-counted width and precision:
+//!
+//! ```
+//! use proctor_libc::printf::byte_string;
+//!
+//! let text = [b'h' as i8, b'e' as i8, b'l' as i8, b'l' as i8, b'o' as i8, 0];
+//! // printf("%s", text);
+//! assert_eq!(format!("{}", byte_string(&text)), "hello");
+//! // printf("%10s", text);    printf("%-10s", text);
+//! assert_eq!(format!("{:10}", byte_string(&text)), "     hello");
+//! assert_eq!(format!("{:<10}", byte_string(&text)), "hello     ");
+//! // printf("%.3s", text);    printf("%10.3s", text);
+//! assert_eq!(format!("{:.3}", byte_string(&text)), "hel");
+//! assert_eq!(format!("{:10.3}", byte_string(&text)), "       hel");
+//! ```
+//!
+//! Precision is a maximum byte count and can make a NUL unnecessary when the
+//! slice contains at least that many bytes. Bytes following the first NUL or
+//! the precision boundary are not inspected:
+//!
+//! ```
+//! use proctor_libc::printf::byte_string;
+//!
+//! let terminated = [b'o' as i8, b'k' as i8, 0, b'x' as i8];
+//! // printf("%s", terminated);    printf("%.0s", terminated);
+//! assert_eq!(format!("{}", byte_string(&terminated)), "ok");
+//! assert_eq!(format!("{:.0}", byte_string(&terminated)), "");
+//!
+//! let bounded = [b'a' as i8, b'b' as i8, b'c' as i8];
+//! // printf("%.2s", bounded);
+//! assert_eq!(format!("{:.2}", byte_string(&bounded)), "ab");
+//! ```
+//!
+//! The selected output bytes must be valid UTF-8. Within that supported
+//! PROCTOR domain they are preserved exactly, including multibyte encodings,
+//! while width still counts bytes rather than Unicode scalar values:
+//!
+//! ```
+//! use proctor_libc::printf::byte_string;
+//!
+//! let text = [0xc3_u8 as i8, 0xa9_u8 as i8, b'!' as i8, 0]; // "é!"
+//! // printf("%5s", text);     printf("%.2s", text);
+//! assert_eq!(format!("{:5}", byte_string(&text)).as_bytes(), b"  \xc3\xa9!");
+//! assert_eq!(format!("{:.2}", byte_string(&text)).as_bytes(), b"\xc3\xa9");
+//! ```
+//!
+//! A precision can split a UTF-8 encoding; such selected output, like any
+//! other non-UTF-8 byte sequence, is outside this wrapper's supported domain.
+//! The implementation remains memory-safe and reports a formatting error.
+//! Native `&str` formatting is sufficient for simple ASCII strings when C's
+//! byte counts and NUL representation are irrelevant. This wrapper is needed
+//! for PROCTOR's `&[i8]` mapping, first-NUL selection, and byte-counted fields.
+//!
 //! Floating formatting uses the C locale's `.` radix character and
 //! round-to-nearest, ties-to-even. It does not track an active process locale
 //! or floating-point rounding mode. Binary128 formatting is tested directly
@@ -1006,6 +1061,57 @@ impl<T: FixedValue> fmt::LowerHex for HexFloat<T> {
 impl<T: FixedValue> fmt::UpperHex for HexFloat<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write_hex_float::<T>(f, FloatParts::from_value(self.value), self.space_sign, true)
+    }
+}
+
+/// Wraps a PROCTOR `char *` mapping for C `printf`-compatible `s` formatting.
+///
+/// The selected bytes must be valid UTF-8. Precision and width count bytes,
+/// and missing precision selects bytes preceding the first NUL. See the
+/// [module documentation](self) for paired Rust and C examples of `%s`, width,
+/// left alignment, precision, NUL termination, and multibyte UTF-8.
+pub fn byte_string(value: &[i8]) -> ByteString<'_> {
+    ByteString { value }
+}
+
+/// A borrowed adapter for C `printf` string formatting in the valid-UTF-8
+/// output domain.
+#[derive(Clone, Copy)]
+pub struct ByteString<'a> {
+    value: &'a [i8],
+}
+
+impl fmt::Display for ByteString<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let bytes: &[u8] = bytemuck::cast_slice(self.value);
+        let selected = match f.precision() {
+            Some(0) => &bytes[..0],
+            Some(precision) => {
+                let within_precision = &bytes[..bytes.len().min(precision)];
+                if let Some(nul) = within_precision.iter().position(|&byte| byte == 0) {
+                    &within_precision[..nul]
+                } else if bytes.len() >= precision {
+                    &bytes[..precision]
+                } else {
+                    return Err(fmt::Error);
+                }
+            }
+            None => {
+                let nul = bytes.iter().position(|&byte| byte == 0).ok_or(fmt::Error)?;
+                &bytes[..nul]
+            }
+        };
+        let text = std::str::from_utf8(selected).map_err(|_| fmt::Error)?;
+
+        let padding = f.width().unwrap_or_default().saturating_sub(selected.len());
+        let (left_spaces, right_spaces) = match f.align().unwrap_or(Alignment::Right) {
+            Alignment::Left => (0, padding),
+            Alignment::Right => (padding, 0),
+            Alignment::Center => (padding / 2, padding - padding / 2),
+        };
+        write_repeated(f, SPACE_PADDING, left_spaces)?;
+        f.write_str(text)?;
+        write_repeated(f, SPACE_PADDING, right_spaces)
     }
 }
 
