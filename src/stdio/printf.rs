@@ -424,6 +424,97 @@
 //! );
 //! ```
 //!
+//! Use [`hex_float`] with Rust's `x` or `X` formatting trait for C's `a` or
+//! `A` conversion. Primitive Rust floats do not implement hexadecimal
+//! formatting, so the wrapper is always required. A missing precision emits
+//! an exact representation and removes trailing zero hexadecimal digits:
+//!
+//! ```
+//! use proctor_libc::printf::hex_float;
+//!
+//! // printf("%a %A", 1.5, 1.5);
+//! assert_eq!(
+//!     format!("{:x} {:X}", hex_float(1.5_f64), hex_float(1.5_f64)),
+//!     "0x1.8p+0 0X1.8P+0",
+//! );
+//! // `%la` and `%lA` have the same `double` argument and result.
+//! assert_eq!(
+//!     format!("{:x} {:X}", hex_float(1.5_f64), hex_float(1.5_f64)),
+//!     "0x1.8p+0 0X1.8P+0",
+//! );
+//! ```
+//!
+//! Precision counts hexadecimal digits after the radix point. Precision zero
+//! omits the radix unless `#` requests it. Width, left alignment, sign, and
+//! zero padding map to C's `width`, `-`, `+`, and `0`; zero padding follows
+//! the sign and `0x` or `0X` prefix:
+//!
+//! ```
+//! use proctor_libc::printf::hex_float;
+//!
+//! // printf("%.3a %.0a %#.0a", 1.5, 1.5, 1.5);
+//! assert_eq!(
+//!     format!("{:.3x} {:.0x} {:#.0x}",
+//!             hex_float(1.5_f64), hex_float(1.5_f64), hex_float(1.5_f64)),
+//!     "0x1.800p+0 0x2p+0 0x2.p+0",
+//! );
+//! // printf("%12.2a %-12.2a %+012.2a", 1.5, 1.5, 1.5);
+//! assert_eq!(
+//!     format!("{:12.2x} {:<12.2x} {:+012.2x}",
+//!             hex_float(1.5_f64), hex_float(1.5_f64), hex_float(1.5_f64)),
+//!     "   0x1.80p+0 0x1.80p+0    +0x001.80p+0",
+//! );
+//! ```
+//!
+//! Call [`HexFloat::space_sign`] for C's space flag. Rust's `+` flag takes
+//! precedence:
+//!
+//! ```
+//! use proctor_libc::printf::hex_float;
+//!
+//! // printf("% a %+ a", 1.5, 1.5);
+//! assert_eq!(
+//!     format!("{:x} {:+x}",
+//!             hex_float(1.5_f64).space_sign(),
+//!             hex_float(1.5_f64).space_sign()),
+//!     " 0x1.8p+0 +0x1.8p+0",
+//! );
+//! ```
+//!
+//! C promotes `float` to `double` before `%a` formatting. Consequently an
+//! `f32` subnormal is formatted as its exact, usually normal, binary64 value:
+//!
+//! ```
+//! use proctor_libc::printf::hex_float;
+//!
+//! let float_subnormal = f32::from_bits(1);
+//! // printf("%a", (double)float_subnormal);
+//! assert_eq!(format!("{:x}", hex_float(float_subnormal)), "0x1p-149");
+//!
+//! let long_double_value = f128::f128::new(1.5_f64);
+//! // Intended equivalents: printf("%La %LA", long_double_value, long_double_value);
+//! assert_eq!(
+//!     format!("{:x} {:X}", hex_float(long_double_value), hex_float(long_double_value)),
+//!     "0x1.8p+0 0X1.8P+0",
+//! );
+//! ```
+//!
+//! Effective binary64 and binary128 subnormals use the deterministic GNU and
+//! libquadmath convention: a leading zero and the type's minimum-normal
+//! exponent. Binary128 is the project's intended `%La`/`%LA` mapping and is
+//! not passed to a host `long double` conversion when that ABI differs.
+//! Floating formatting uses the C locale and round-to-nearest, ties-to-even;
+//! it does not track an active process locale or floating-point rounding mode.
+//!
+//! [`HexFloat`] intentionally does not implement [`std::fmt::Display`]; the
+//! source conversion must select lowercase or uppercase hexadecimal formatting:
+//!
+//! ```compile_fail
+//! use proctor_libc::printf::hex_float;
+//!
+//! let _ = format!("{}", hex_float(1.5_f64));
+//! ```
+//!
 //! Floating formatting uses the C locale's `.` radix character and
 //! round-to-nearest, ties-to-even. It does not track an active process locale
 //! or floating-point rounding mode. Binary128 formatting is tested directly
@@ -462,6 +553,8 @@ mod private {
         const FRACTION_BITS: u32;
         const EXPONENT_BITS: u32;
         const EXPONENT_BIAS: i32;
+        const HEX_FRACTION_BITS: u32;
+        const HEX_MIN_NORMAL_EXPONENT: i32;
 
         fn bits(self) -> u128;
     }
@@ -480,7 +573,7 @@ pub trait SignedValue: private::SealedSigned {}
 pub trait UnsignedValue: private::SealedUnsigned {}
 
 /// A primitive floating-point value accepted by [`fixed`], [`fixed_upper`],
-/// [`scientific`], [`general`], and [`general_upper`].
+/// [`scientific`], [`general`], [`general_upper`], and [`hex_float`].
 ///
 /// This sealed trait is implemented for `f32`, `f64`, and
 /// [`struct@f128::f128`].
@@ -521,6 +614,8 @@ impl private::SealedFixed for f32 {
     const FRACTION_BITS: u32 = 23;
     const EXPONENT_BITS: u32 = 8;
     const EXPONENT_BIAS: i32 = 127;
+    const HEX_FRACTION_BITS: u32 = 52;
+    const HEX_MIN_NORMAL_EXPONENT: i32 = -1022;
 
     fn bits(self) -> u128 {
         self.to_bits() as u128
@@ -533,6 +628,8 @@ impl private::SealedFixed for f64 {
     const FRACTION_BITS: u32 = 52;
     const EXPONENT_BITS: u32 = 11;
     const EXPONENT_BIAS: i32 = 1023;
+    const HEX_FRACTION_BITS: u32 = 52;
+    const HEX_MIN_NORMAL_EXPONENT: i32 = -1022;
 
     fn bits(self) -> u128 {
         self.to_bits() as u128
@@ -545,6 +642,8 @@ impl private::SealedFixed for f128::f128 {
     const FRACTION_BITS: u32 = 112;
     const EXPONENT_BITS: u32 = 15;
     const EXPONENT_BIAS: i32 = 16383;
+    const HEX_FRACTION_BITS: u32 = 112;
+    const HEX_MIN_NORMAL_EXPONENT: i32 = -16382;
 
     fn bits(self) -> u128 {
         u128::from_ne_bytes(self.into_inner())
@@ -858,6 +957,58 @@ impl<T: FixedValue> fmt::Display for GeneralUpper<T> {
     }
 }
 
+/// Wraps a floating-point primitive for C `printf`-compatible `a` or `A`
+/// formatting.
+///
+/// Format the returned wrapper with Rust's `x` or `X` trait to select the
+/// conversion case. Primitive Rust floats have no native hexadecimal
+/// formatter, and this adapter intentionally does not implement
+/// [`fmt::Display`]. See the [module documentation](self) for paired Rust and C
+/// examples of every supported type, precision, and flag.
+pub fn hex_float<T: FixedValue>(value: T) -> HexFloat<T> {
+    HexFloat {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` hexadecimal floating formatting.
+#[derive(Clone, Copy)]
+pub struct HexFloat<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> HexFloat<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{:x}", hex_float(1.5_f32).space_sign())` is equivalent to
+    /// `printf("% a", (double)1.5f)`, while formatting the same wrapper with
+    /// `{:+x}` is equivalent to `printf("%+ a", (double)1.5f)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::LowerHex for HexFloat<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_hex_float::<T>(
+            f,
+            FloatParts::from_value(self.value),
+            self.space_sign,
+            false,
+        )
+    }
+}
+
+impl<T: FixedValue> fmt::UpperHex for HexFloat<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_hex_float::<T>(f, FloatParts::from_value(self.value), self.space_sign, true)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FloatParts {
     Finite {
@@ -1027,6 +1178,177 @@ fn write_general(
     };
 
     write_float_field(f, negative, &body, finite, space_sign)
+}
+
+fn write_hex_float<T: FixedValue>(
+    f: &mut Formatter<'_>,
+    parts: FloatParts,
+    space_sign: bool,
+    uppercase: bool,
+) -> fmt::Result {
+    match parts {
+        FloatParts::Finite {
+            negative,
+            significand,
+            binary_exponent,
+        } => {
+            let body = hex_float_body(
+                significand,
+                binary_exponent,
+                T::HEX_FRACTION_BITS,
+                T::HEX_MIN_NORMAL_EXPONENT,
+                f.precision(),
+                f.alternate(),
+                uppercase,
+            );
+            write_hex_float_field(f, negative, &body, space_sign, uppercase)
+        }
+        FloatParts::Infinite { negative } => write_float_field(
+            f,
+            negative,
+            if uppercase { "INF" } else { "inf" },
+            false,
+            space_sign,
+        ),
+        FloatParts::Nan { negative } => write_float_field(
+            f,
+            negative,
+            if uppercase { "NAN" } else { "nan" },
+            false,
+            space_sign,
+        ),
+    }
+}
+
+fn hex_float_body(
+    significand: u128,
+    binary_exponent: i32,
+    fraction_bits: u32,
+    minimum_normal_exponent: i32,
+    precision: Option<usize>,
+    alternate: bool,
+    uppercase: bool,
+) -> String {
+    debug_assert_eq!(fraction_bits % 4, 0);
+
+    let (mantissa, displayed_exponent) = if significand == 0 {
+        (0, 0)
+    } else {
+        let highest_bit = (u128::BITS - 1 - significand.leading_zeros()) as i32;
+        let highest_exponent = highest_bit + binary_exponent;
+        if highest_exponent >= minimum_normal_exponent {
+            let shift = fraction_bits as i32 - highest_bit;
+            debug_assert!(shift >= 0);
+            (significand << shift as usize, highest_exponent)
+        } else {
+            let shift = binary_exponent + fraction_bits as i32 - minimum_normal_exponent;
+            debug_assert!(shift >= 0);
+            (significand << shift as usize, minimum_normal_exponent)
+        }
+    };
+
+    let exact_fraction_digits = fraction_bits as usize / 4;
+    let (digits, fractional_digits) = match precision {
+        Some(requested) if requested < exact_fraction_digits => {
+            let discarded_bits = (exact_fraction_digits - requested) * 4;
+            let mut rounded = mantissa >> discarded_bits;
+            let discarded_mask = (1_u128 << discarded_bits) - 1;
+            let discarded = mantissa & discarded_mask;
+            let halfway = 1_u128 << (discarded_bits - 1);
+            if discarded > halfway || (discarded == halfway && rounded & 1 != 0) {
+                rounded += 1;
+            }
+            (
+                padded_hex_digits(rounded, requested + 1, uppercase),
+                requested,
+            )
+        }
+        Some(requested) => {
+            let mut digits = padded_hex_digits(mantissa, exact_fraction_digits + 1, uppercase);
+            digits.extend(std::iter::repeat_n('0', requested - exact_fraction_digits));
+            (digits, requested)
+        }
+        None => {
+            let mut digits = padded_hex_digits(mantissa, exact_fraction_digits + 1, uppercase);
+            while digits.len() > 1 && digits.ends_with('0') {
+                digits.pop();
+            }
+            let fractional_digits = digits.len() - 1;
+            (digits, fractional_digits)
+        }
+    };
+
+    let mut body = String::with_capacity(digits.len() + 10);
+    body.push_str(&digits[..1]);
+    if fractional_digits != 0 || alternate {
+        body.push('.');
+    }
+    body.push_str(&digits[1..]);
+    body.push(if uppercase { 'P' } else { 'p' });
+    if displayed_exponent < 0 {
+        body.push('-');
+    } else {
+        body.push('+');
+    }
+    body.push_str(&displayed_exponent.unsigned_abs().to_string());
+    body
+}
+
+fn padded_hex_digits(value: u128, width: usize, uppercase: bool) -> String {
+    let digits = if uppercase {
+        format!("{value:X}")
+    } else {
+        format!("{value:x}")
+    };
+    if digits.len() >= width {
+        return digits;
+    }
+
+    let mut padded = String::with_capacity(width);
+    padded.extend(std::iter::repeat_n('0', width - digits.len()));
+    padded.push_str(&digits);
+    padded
+}
+
+fn write_hex_float_field(
+    f: &mut Formatter<'_>,
+    negative: bool,
+    body: &str,
+    space_sign: bool,
+    uppercase: bool,
+) -> fmt::Result {
+    let sign = if negative {
+        "-"
+    } else if f.sign_plus() {
+        "+"
+    } else if space_sign {
+        " "
+    } else {
+        ""
+    };
+    let prefix = if uppercase { "0X" } else { "0x" };
+    let content_width = sign.len() + prefix.len() + body.len();
+    let padding = f.width().unwrap_or_default().saturating_sub(content_width);
+    let alignment = f.align().unwrap_or(Alignment::Right);
+    let zero_padding = f.sign_aware_zero_pad() && alignment == Alignment::Right;
+    let (left_spaces, right_spaces) = if zero_padding {
+        (0, 0)
+    } else {
+        match alignment {
+            Alignment::Left => (0, padding),
+            Alignment::Right => (padding, 0),
+            Alignment::Center => (padding / 2, padding - padding / 2),
+        }
+    };
+
+    write_repeated(f, SPACE_PADDING, left_spaces)?;
+    f.write_str(sign)?;
+    f.write_str(prefix)?;
+    if zero_padding {
+        write_repeated(f, ZERO_PADDING, padding)?;
+    }
+    f.write_str(body)?;
+    write_repeated(f, SPACE_PADDING, right_spaces)
 }
 
 fn write_float_field(

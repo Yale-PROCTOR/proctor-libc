@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::printf::{fixed, fixed_upper, general, general_upper, scientific, signed, unsigned};
+use super::printf::{
+    fixed, fixed_upper, general, general_upper, hex_float, scientific, signed, unsigned,
+};
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
@@ -811,6 +813,175 @@ proptest! {
                 prop_assert!(!mantissa.ends_with('0') || !mantissa.contains('.'));
             } else if let Some((_, fraction)) = magnitude.split_once('.') {
                 prop_assert!(!fraction.ends_with('0'));
+            }
+        }
+    }
+}
+
+#[test]
+fn hex_float_formats_every_supported_type_without_narrowing() {
+    assert_eq!(format!("{:x}", hex_float(1.5_f32)), "0x1.8p+0");
+    assert_eq!(format!("{:x}", hex_float(1.5_f64)), "0x1.8p+0");
+    assert_eq!(
+        format!("{:x}", hex_float(f128::f128::new(1.5_f64))),
+        "0x1.8p+0"
+    );
+    assert_eq!(format!("{:X}", hex_float(26.5_f32)), "0X1.A8P+4");
+    assert_eq!(format!("{:X}", hex_float(26.5_f64)), "0X1.A8P+4");
+    assert_eq!(
+        format!("{:X}", hex_float(f128::f128::new(26.5_f64))),
+        "0X1.A8P+4"
+    );
+}
+
+#[test]
+fn hex_float_default_precision_is_exact_and_trims_fractional_zeros() {
+    assert_eq!(format!("{:x}", hex_float(1.0_f64)), "0x1p+0");
+    assert_eq!(format!("{:#x}", hex_float(1.0_f64)), "0x1.p+0");
+    assert_eq!(format!("{:x}", hex_float(0.1_f64)), "0x1.999999999999ap-4");
+    assert_eq!(format!("{:x}", hex_float(1.0_f32 / 10.0)), "0x1.99999ap-4");
+    assert_eq!(
+        format!("{:x}", hex_float(f128::f128::new(0.5_f64))),
+        "0x1p-1"
+    );
+}
+
+#[test]
+fn hex_float_explicit_precision_rounds_ties_to_even_and_can_carry() {
+    assert_eq!(format!("{:.0x}", hex_float(1.25_f64)), "0x1p+0");
+    assert_eq!(format!("{:.0x}", hex_float(1.5_f64)), "0x2p+0");
+    assert_eq!(format!("{:.1x}", hex_float(1.09375_f64)), "0x1.2p+0");
+    assert_eq!(format!("{:.1x}", hex_float(1.15625_f64)), "0x1.2p+0");
+    assert_eq!(format!("{:.2x}", hex_float(1.5_f64)), "0x1.80p+0");
+    assert_eq!(format!("{:#.0X}", hex_float(1.5_f64)), "0X2.P+0");
+}
+
+#[test]
+fn hex_float_sign_width_alignment_zero_padding_and_prefix_follow_printf() {
+    assert_eq!(format!("{:x}", hex_float(-0.0_f64)), "-0x0p+0");
+    assert_eq!(format!("{:+x}", hex_float(0.0_f64)), "+0x0p+0");
+    assert_eq!(format!("{:x}", hex_float(0.0_f64).space_sign()), " 0x0p+0");
+    assert_eq!(format!("{:+x}", hex_float(0.0_f64).space_sign()), "+0x0p+0");
+    assert_eq!(format!("{:12.2x}", hex_float(1.5_f64)), "   0x1.80p+0");
+    assert_eq!(format!("{:<12.2x}", hex_float(1.5_f64)), "0x1.80p+0   ");
+    assert_eq!(format!("{:012.2x}", hex_float(-1.5_f64)), "-0x001.80p+0");
+    assert_eq!(format!("{:+012.2X}", hex_float(1.5_f64)), "+0X001.80P+0");
+    assert_eq!(format!("{:<012.2x}", hex_float(1.5_f64)), "0x1.80p+0   ");
+}
+
+#[test]
+fn hex_float_f32_uses_the_promoted_binary64_representation() {
+    assert_eq!(format!("{:x}", hex_float(f32::from_bits(1))), "0x1p-149");
+    assert_eq!(format!("{:x}", hex_float(f32::MIN_POSITIVE)), "0x1p-126");
+    assert_eq!(
+        format!("{:x}", hex_float(f32::from_bits(0x3f80_0001))),
+        "0x1.000002p+0"
+    );
+}
+
+#[test]
+fn hex_float_uses_the_gnu_subnormal_convention_and_handles_boundaries() {
+    assert_eq!(
+        format!("{:x}", hex_float(f64::from_bits(1))),
+        "0x0.0000000000001p-1022"
+    );
+    assert_eq!(
+        format!("{:x}", hex_float(f64::from_bits((1_u64 << 52) - 1))),
+        "0x0.fffffffffffffp-1022"
+    );
+    assert_eq!(
+        format!("{:.0x}", hex_float(f64::from_bits((1_u64 << 52) - 1))),
+        "0x1p-1022"
+    );
+    assert_eq!(format!("{:x}", hex_float(f64::MIN_POSITIVE)), "0x1p-1022");
+    assert_eq!(
+        format!("{:x}", hex_float(f64::MAX)),
+        "0x1.fffffffffffffp+1023"
+    );
+
+    let f128_min_subnormal = f128_from_bits(1);
+    assert_eq!(
+        format!("{:x}", hex_float(f128_min_subnormal)),
+        format!("0x0.{}1p-16382", "0".repeat(27))
+    );
+    assert_eq!(
+        format!("{:x}", hex_float(f128_from_bits(1_u128 << 112))),
+        "0x1p-16382"
+    );
+    assert_eq!(
+        format!("{:x}", hex_float(f128::f128::MAX)),
+        format!("0x1.{}p+16383", "f".repeat(28))
+    );
+}
+
+#[test]
+fn hex_float_nonfinite_spelling_signs_and_padding_follow_printf() {
+    assert_eq!(format!("{:x}", hex_float(f64::INFINITY)), "inf");
+    assert_eq!(format!("{:X}", hex_float(f64::INFINITY)), "INF");
+    assert_eq!(format!("{:x}", hex_float(f64::NEG_INFINITY)), "-inf");
+    assert_eq!(format!("{:X}", hex_float(f64::NAN)), "NAN");
+    assert_eq!(format!("{:+x}", hex_float(f64::INFINITY)), "+inf");
+    assert_eq!(format!("{:x}", hex_float(f64::NAN).space_sign()), " nan");
+    assert_eq!(format!("{:08x}", hex_float(f64::INFINITY)), "     inf");
+    assert_eq!(format!("{:<8X}", hex_float(f64::NAN)), "NAN     ");
+}
+
+#[test]
+fn hex_float_large_precision_and_cross_type_values_are_complete() {
+    let precise = format!("{:#.129x}", hex_float(1.5_f64));
+    assert_eq!(precise.len(), 136);
+    assert!(precise.starts_with("0x1.8"));
+    assert!(precise.ends_with("p+0"));
+    assert_eq!(precise.matches('0').count(), 130);
+
+    for value in [-16.0_f32, -1.5, -0.0, 0.0, 1.5, 16.0, 65_536.0] {
+        let as_f64 = f64::from(value);
+        let as_f128 = f128::f128::new(as_f64);
+        for precision in [0, 1, 2, 13, 28] {
+            let from_f32 = format!("{value:.precision$x}", value = hex_float(value));
+            let from_f64 = format!("{value:.precision$x}", value = hex_float(as_f64));
+            let from_f128 = format!("{value:.precision$x}", value = hex_float(as_f128));
+            assert_eq!(from_f32, from_f64);
+            assert_eq!(from_f64, from_f128);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(f128_invariant_config())]
+
+    // Host `%La` is deliberately not used as an oracle because its ABI may
+    // not be IEEE binary128.
+    #[test]
+    fn generated_f128_values_satisfy_hex_float_invariants(
+        bits in any::<u128>(),
+        precision in 0_usize..=32,
+    ) {
+        let value = f128_from_bits(bits);
+        let lower = format!("{value:.precision$x}", value = hex_float(value));
+        let upper = format!("{value:.precision$X}", value = hex_float(value));
+        prop_assert_eq!(lower.to_ascii_uppercase(), upper.as_str());
+
+        let negative = bits >> 127 != 0;
+        prop_assert_eq!(lower.starts_with('-'), negative);
+
+        let exponent_field = (bits >> 112) & 0x7fff;
+        if exponent_field != 0x7fff {
+            let magnitude = lower.strip_prefix('-').unwrap_or(&lower);
+            prop_assert!(magnitude.starts_with("0x"));
+            let (mantissa, exponent) = magnitude[2..]
+                .split_once('p')
+                .expect("finite hexadecimal output has an exponent marker");
+            prop_assert!(matches!(exponent.as_bytes().first(), Some(b'+') | Some(b'-')));
+            prop_assert!(exponent[1..].bytes().all(|byte| byte.is_ascii_digit()));
+            if precision == 0 {
+                prop_assert!(!mantissa.contains('.'));
+            } else {
+                let (_, fraction) = mantissa
+                    .split_once('.')
+                    .expect("nonzero precision has a radix point");
+                prop_assert_eq!(fraction.len(), precision);
+                prop_assert!(fraction.bytes().all(|byte| byte.is_ascii_hexdigit()));
             }
         }
     }

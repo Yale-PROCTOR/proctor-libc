@@ -6,6 +6,8 @@ use std::ffi::CStr;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed};
 
+#[cfg(target_env = "gnu")]
+use super::hex_float;
 use super::{fixed, fixed_upper, general, general_upper, scientific, signed, unsigned};
 
 const BUFFER_SIZE: usize = 256;
@@ -1185,6 +1187,73 @@ fn check_general_f64(value: f64) {
     general_matrix!(value, "f64");
 }
 
+// These byte-for-byte checks intentionally use GNU's permitted subnormal
+// spelling as the oracle; ordinary hexadecimal tests remain cross-platform.
+#[cfg(target_env = "gnu")]
+macro_rules! hex_float_matrix {
+    ($value:expr, $type_name:literal) => {{
+        let value = $value;
+        let abi_value = libc::c_double::from(value);
+
+        macro_rules! check {
+            ($c_format:literal, $rust_format:literal, $wrapper:expr) => {
+                pair!(
+                    oracle_c_double,
+                    concat!($c_format, "\0").as_bytes(),
+                    abi_value,
+                    format!($rust_format, $wrapper),
+                    $type_name,
+                    value
+                )
+            };
+        }
+
+        check!("%a", "{:x}", hex_float(value));
+        check!("%A", "{:X}", hex_float(value));
+        check!("%la", "{:x}", hex_float(value));
+        check!("%lA", "{:X}", hex_float(value));
+
+        check!("%.0a", "{:.0x}", hex_float(value));
+        check!("%.1a", "{:.1x}", hex_float(value));
+        check!("%.2a", "{:.2x}", hex_float(value));
+        check!("%.6a", "{:.6x}", hex_float(value));
+        check!("%.13a", "{:.13x}", hex_float(value));
+        check!("%.20a", "{:.20x}", hex_float(value));
+        check!("%.0A", "{:.0X}", hex_float(value));
+        check!("%.6A", "{:.6X}", hex_float(value));
+
+        check!("%+a", "{:+x}", hex_float(value));
+        check!("% a", "{:x}", hex_float(value).space_sign());
+        check!("%+ a", "{:+x}", hex_float(value).space_sign());
+        check!("%+A", "{:+X}", hex_float(value));
+        check!("% A", "{:X}", hex_float(value).space_sign());
+
+        check!("%24.6a", "{:24.6x}", hex_float(value));
+        check!("%-24.6a", "{:<24.6x}", hex_float(value));
+        check!("%024.6a", "{:024.6x}", hex_float(value));
+        check!("%-024.6a", "{:<024.6x}", hex_float(value));
+        check!("%+024.6a", "{:+024.6x}", hex_float(value));
+        check!("% 024.6a", "{:024.6x}", hex_float(value).space_sign());
+
+        check!("%#.0a", "{:#.0x}", hex_float(value));
+        check!("%#.6a", "{:#.6x}", hex_float(value));
+        check!("%#24.0a", "{:#24.0x}", hex_float(value));
+        check!("%#024.0a", "{:#024.0x}", hex_float(value));
+        check!("%-#024.0a", "{:<#024.0x}", hex_float(value));
+        check!("%#.6A", "{:#.6X}", hex_float(value));
+    }};
+}
+
+#[cfg(target_env = "gnu")]
+fn check_hex_float_f32(value: f32) {
+    hex_float_matrix!(value, "f32");
+}
+
+#[cfg(target_env = "gnu")]
+fn check_hex_float_f64(value: f64) {
+    hex_float_matrix!(value, "f64");
+}
+
 #[test]
 fn all_i8_values_match_libc() {
     for value in i8::MIN..=i8::MAX {
@@ -1642,6 +1711,70 @@ fn deterministic_f64_general_values_match_libc() {
     }
 }
 
+#[cfg(target_env = "gnu")]
+#[test]
+fn deterministic_f32_hex_float_values_match_libc() {
+    for value in [
+        f32::NEG_INFINITY,
+        f32::MIN,
+        -26.5,
+        -2.0,
+        -1.5,
+        -1.0,
+        -0.0,
+        0.0,
+        f32::from_bits(1),
+        f32::from_bits((1_u32 << 23) - 1),
+        f32::MIN_POSITIVE,
+        1.0,
+        1.09375,
+        1.15625,
+        1.25,
+        1.5,
+        f32::from_bits(0x3f80_0001),
+        2.0,
+        26.5,
+        f32::MAX,
+        f32::INFINITY,
+        f32::NAN,
+        f32::from_bits(f32::NAN.to_bits() | (1 << 31)),
+    ] {
+        check_hex_float_f32(value);
+    }
+}
+
+#[cfg(target_env = "gnu")]
+#[test]
+fn deterministic_f64_hex_float_values_match_libc() {
+    for value in [
+        f64::NEG_INFINITY,
+        f64::MIN,
+        -26.5,
+        -2.0,
+        -1.5,
+        -1.0,
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        f64::from_bits((1_u64 << 52) - 1),
+        f64::MIN_POSITIVE,
+        1.0,
+        1.09375,
+        1.15625,
+        1.25,
+        1.5,
+        f64::from_bits(1.0_f64.to_bits() + 1),
+        2.0,
+        26.5,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+        f64::from_bits(f64::NAN.to_bits() | (1 << 63)),
+    ] {
+        check_hex_float_f64(value);
+    }
+}
+
 fn check_dr_233_alternate_boundary(
     c_format: &'static [u8],
     abi_value: libc::c_double,
@@ -1773,5 +1906,19 @@ proptest! {
     #[test]
     fn generated_f64_general_values_match_libc(bits in any::<u64>()) {
         check_general_f64(f64::from_bits(bits));
+    }
+}
+
+#[cfg(target_env = "gnu")]
+proptest! {
+    #![proptest_config(proptest_config())]
+
+    #[test]
+    fn generated_f32_hex_float_values_match_libc(bits in any::<u32>()) {
+        check_hex_float_f32(f32::from_bits(bits));
+    }
+    #[test]
+    fn generated_f64_hex_float_values_match_libc(bits in any::<u64>()) {
+        check_hex_float_f64(f64::from_bits(bits));
     }
 }
