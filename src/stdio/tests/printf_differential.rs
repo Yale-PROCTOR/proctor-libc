@@ -1,11 +1,12 @@
-//! Differential tests for the integer `printf` formatting adapters.
+//! Differential tests for the integer and fixed-point `printf` formatting
+//! adapters.
 
 use std::ffi::CStr;
 
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed};
 
-use super::{signed, unsigned};
+use super::{fixed, fixed_upper, signed, unsigned};
 
 const BUFFER_SIZE: usize = 256;
 
@@ -85,6 +86,7 @@ define_oracle!(oracle_c_longlong, libc::c_longlong);
 define_oracle!(oracle_c_ulonglong, libc::c_ulonglong);
 define_oracle!(oracle_ssize_t, libc::ssize_t);
 define_oracle!(oracle_size_t, libc::size_t);
+define_oracle!(oracle_c_double, libc::c_double);
 
 macro_rules! pair {
     ($oracle:ident, $c_format:expr, $abi_value:expr, $rust_output:expr, $type_name:expr, $value:expr) => {
@@ -621,6 +623,242 @@ fn check_usize(value: usize) {
     unsigned_matrix!(value, "usize", "z", oracle_size_t, libc::size_t);
 }
 
+macro_rules! fixed_matrix {
+    ($value:expr, $type_name:literal) => {{
+        let value = $value;
+        let abi_value = value as libc::c_double;
+
+        pair!(
+            oracle_c_double,
+            b"%f\0",
+            abi_value,
+            format!("{}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%F\0",
+            abi_value,
+            format!("{}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%lf\0",
+            abi_value,
+            format!("{}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%lF\0",
+            abi_value,
+            format!("{}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%.0f\0",
+            abi_value,
+            format!("{:.0}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.1f\0",
+            abi_value,
+            format!("{:.1}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.2f\0",
+            abi_value,
+            format!("{:.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.6f\0",
+            abi_value,
+            format!("{:.6}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.17f\0",
+            abi_value,
+            format!("{:.17}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.0F\0",
+            abi_value,
+            format!("{:.0}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%.6F\0",
+            abi_value,
+            format!("{:.6}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%+f\0",
+            abi_value,
+            format!("{:+}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% f\0",
+            abi_value,
+            format!("{}", fixed(value).space_sign()),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+ f\0",
+            abi_value,
+            format!("{:+}", fixed(value).space_sign()),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+F\0",
+            abi_value,
+            format!("{:+}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% F\0",
+            abi_value,
+            format!("{}", fixed_upper(value).space_sign()),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%20.2f\0",
+            abi_value,
+            format!("{:20.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-20.2f\0",
+            abi_value,
+            format!("{:<20.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%020.2f\0",
+            abi_value,
+            format!("{:020.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-020.2f\0",
+            abi_value,
+            format!("{:<020.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%+020.2f\0",
+            abi_value,
+            format!("{:+020.2}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"% 020.2f\0",
+            abi_value,
+            format!("{:020.2}", fixed(value).space_sign()),
+            $type_name,
+            value
+        );
+
+        pair!(
+            oracle_c_double,
+            b"%#.0f\0",
+            abi_value,
+            format!("{:#.0}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#20.0f\0",
+            abi_value,
+            format!("{:#20.0}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#020.0f\0",
+            abi_value,
+            format!("{:#020.0}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%-#020.0f\0",
+            abi_value,
+            format!("{:<#020.0}", fixed(value)),
+            $type_name,
+            value
+        );
+        pair!(
+            oracle_c_double,
+            b"%#.0F\0",
+            abi_value,
+            format!("{:#.0}", fixed_upper(value)),
+            $type_name,
+            value
+        );
+    }};
+}
+
+fn check_f32(value: f32) {
+    fixed_matrix!(value, "f32");
+}
+
+fn check_f64(value: f64) {
+    fixed_matrix!(value, "f64");
+}
+
 #[test]
 fn all_i8_values_match_libc() {
     for value in i8::MIN..=i8::MAX {
@@ -896,6 +1134,62 @@ fn deterministic_unsigned_boundaries_match_libc() {
     }
 }
 
+#[test]
+fn deterministic_f32_values_match_libc() {
+    for value in [
+        f32::NEG_INFINITY,
+        f32::MIN,
+        -65_536.5,
+        -3.5,
+        -2.5,
+        -1.375,
+        -1.125,
+        -0.0,
+        0.0,
+        f32::from_bits(1),
+        f32::MIN_POSITIVE,
+        1.125,
+        1.375,
+        2.5,
+        3.5,
+        65_536.5,
+        f32::MAX,
+        f32::INFINITY,
+        f32::NAN,
+        f32::from_bits(f32::NAN.to_bits() | (1 << 31)),
+    ] {
+        check_f32(value);
+    }
+}
+
+#[test]
+fn deterministic_f64_values_match_libc() {
+    for value in [
+        f64::NEG_INFINITY,
+        -1.0e200,
+        -65_536.5,
+        -3.5,
+        -2.5,
+        -1.375,
+        -1.125,
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        1.125,
+        1.375,
+        2.5,
+        3.5,
+        65_536.5,
+        1.0e200,
+        f64::INFINITY,
+        f64::NAN,
+        f64::from_bits(f64::NAN.to_bits() | (1 << 63)),
+    ] {
+        check_f64(value);
+    }
+}
+
 fn proptest_config() -> Config {
     Config {
         cases: 512,
@@ -924,4 +1218,16 @@ proptest! {
     fn generated_u64_values_match_libc(value in any::<u64>()) { check_u64(value); }
     #[test]
     fn generated_usize_values_match_libc(value in any::<usize>()) { check_usize(value); }
+    #[test]
+    fn generated_f32_values_match_libc(bits in any::<u32>()) { check_f32(f32::from_bits(bits)); }
+    #[test]
+    fn generated_f64_values_match_libc(
+        value in any::<u64>()
+            .prop_map(f64::from_bits)
+            .prop_filter("fixed output must fit the oracle buffer", |value| {
+                !value.is_finite() || value.abs() <= 1.0e200
+            })
+    ) {
+        check_f64(value);
+    }
 }

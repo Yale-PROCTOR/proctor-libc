@@ -1,5 +1,5 @@
-//! Integer formatting adapters for C `printf` semantics that Rust formatting
-//! does not express directly.
+//! Formatting adapters for C `printf` semantics that Rust formatting does not
+//! express directly.
 //!
 //! Use [`signed`] for the `d` and `i` conversions and [`unsigned`] for the
 //! `u`, `o`, `x`, and `X` conversions. The wrappers preserve the input's Rust
@@ -117,7 +117,128 @@
 //! // Rust's native alternate octal prefix and zero-valued hexadecimal form
 //! // differ from C, so the wrapper is required whenever `#` is used.
 //! ```
+//!
+//! Use [`fixed`] for the `f` conversion and [`fixed_upper`] for the `F`
+//! conversion. A missing Rust precision has C's default of six digits after
+//! the radix point:
+//!
+//! ```
+//! use proctor_libc::printf::{fixed, fixed_upper};
+//!
+//! // printf("%f %F", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{} {}", fixed(1.25_f64), fixed_upper(1.25_f64)),
+//!     "1.250000 1.250000",
+//! );
+//! // printf("%lf %lF", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{} {}", fixed(1.25_f64), fixed_upper(1.25_f64)),
+//!     "1.250000 1.250000",
+//! );
+//! ```
+//!
+//! C promotes a `float` argument to `double`, so an `f32` passed to [`fixed`]
+//! or [`fixed_upper`] has the semantics of `%f` or `%F` after that promotion.
+//! The `f128::f128` implementation is the project's IEEE binary128 mapping for
+//! C `long double` and the `%Lf` and `%LF` spellings:
+//!
+//! ```
+//! use proctor_libc::printf::{fixed, fixed_upper};
+//!
+//! let float_value = 1.25_f32;
+//! // printf("%f %F", (double)float_value, (double)float_value);
+//! assert_eq!(
+//!     format!("{} {}", fixed(float_value), fixed_upper(float_value)),
+//!     "1.250000 1.250000",
+//! );
+//!
+//! let long_double_value = f128::f128::new(1.25_f64);
+//! // Intended equivalents: printf("%Lf %LF", long_double_value, long_double_value);
+//! assert_eq!(
+//!     format!(
+//!         "{} {}",
+//!         fixed(long_double_value),
+//!         fixed_upper(long_double_value),
+//!     ),
+//!     "1.250000 1.250000",
+//! );
+//! ```
+//!
+//! Rust precision, width, left alignment, sign, alternate form, and zero
+//! padding map to C precision, `width`, `-`, `+`, `#`, and `0`. [`fixed`] is
+//! needed even in simple cases because native Rust omits C's default six
+//! fractional digits. For an explicit nonzero precision, however, native Rust
+//! formatting is already exact for finite `f32` and `f64` values when no
+//! wrapper-only behavior is used:
+//!
+//! ```
+//! use proctor_libc::printf::fixed;
+//!
+//! // printf("%.2f %.0f", 1.25, 1.5);
+//! assert_eq!(format!("{:.2} {:.0}", fixed(1.25_f64), fixed(1.5_f64)), "1.25 2");
+//! // Native format!("{:.2} {:.0}", 1.25_f64, 1.5_f64) is exact here.
+//!
+//! // printf("%8.2f %-8.2f", 1.25, 1.25);
+//! assert_eq!(format!("{:8.2} {:<8.2}", fixed(1.25_f64), fixed(1.25_f64)),
+//!            "    1.25 1.25    ");
+//! // printf("%+08.2f %-08.2f", 1.25, 1.25);
+//! assert_eq!(format!("{:+08.2} {:<08.2}", fixed(1.25_f64), fixed(1.25_f64)),
+//!            "+0001.25 1.25    ");
+//! // These explicit-precision cases also work with native f32/f64 formatting.
+//! ```
+//!
+//! Call [`Fixed::space_sign`] or [`FixedUpper::space_sign`] for C's space flag.
+//! Rust's `+` flag takes precedence:
+//!
+//! ```
+//! use proctor_libc::printf::fixed;
+//!
+//! // printf("% f %+ f", 1.25, 1.25);
+//! assert_eq!(
+//!     format!("{} {:+}", fixed(1.25_f64).space_sign(), fixed(1.25_f64).space_sign()),
+//!     " 1.250000 +1.250000",
+//! );
+//! // Native Rust has no space-sign flag, so the wrapper is required.
+//! ```
+//!
+//! C's `#` flag retains the radix point at precision zero. This differs from
+//! native Rust, and zero padding remains sign-aware:
+//!
+//! ```
+//! use proctor_libc::printf::fixed;
+//!
+//! // printf("%#.0f %08.2f", 2.0, -1.25);
+//! assert_eq!(format!("{:#.0} {:08.2}", fixed(2.0_f64), fixed(-1.25_f64)),
+//!            "2. -0001.25");
+//! // printf("%#08.0f %-#08.0f", 2.0, 2.0);
+//! assert_eq!(format!("{:#08.0} {:<#08.0}", fixed(2.0_f64), fixed(2.0_f64)),
+//!            "0000002. 2.      ");
+//! ```
+//!
+//! [`fixed_upper`] is observably different for nonfinite values:
+//!
+//! ```
+//! use proctor_libc::printf::{fixed, fixed_upper};
+//!
+//! // printf("%f %F", INFINITY, INFINITY);
+//! assert_eq!(format!("{} {}", fixed(f64::INFINITY), fixed_upper(f64::INFINITY)),
+//!            "inf INF");
+//! // Native Rust uses `inf`/`NaN`, which does not cover both C spellings.
+//! ```
+//!
+//! Floating formatting uses the C locale's `.` radix character and
+//! round-to-nearest, ties-to-even. It does not track an active process locale
+//! or floating-point rounding mode. Binary128 formatting is tested directly
+//! and by invariants, but is not differentially checked against host `%Lf` on
+//! systems where C `long double` has a different representation.
+//!
+//! Only `f32`, `f64`, and `f128::f128` are accepted:
+//!
+//! ```compile_fail
+//! let _ = proctor_libc::printf::fixed(1_i32);
+//! ```
 
+use num_bigint::BigUint;
 use std::fmt::{self, Alignment, Formatter};
 
 const SPACE_PADDING: &str = concat!(
@@ -137,6 +258,14 @@ mod private {
     pub trait SealedUnsigned: Copy {
         fn to_u128(self) -> u128;
     }
+
+    pub trait SealedFixed: Copy {
+        const FRACTION_BITS: u32;
+        const EXPONENT_BITS: u32;
+        const EXPONENT_BIAS: i32;
+
+        fn bits(self) -> u128;
+    }
 }
 
 /// A primitive signed integer accepted by [`signed`].
@@ -150,6 +279,12 @@ pub trait SignedValue: private::SealedSigned {}
 /// This sealed trait is implemented for `u8`, `u16`, `u32`, `u64`, and
 /// `usize`.
 pub trait UnsignedValue: private::SealedUnsigned {}
+
+/// A primitive floating-point value accepted by [`fixed`] and [`fixed_upper`].
+///
+/// This sealed trait is implemented for `f32`, `f64`, and
+/// [`struct@f128::f128`].
+pub trait FixedValue: private::SealedFixed {}
 
 macro_rules! impl_signed_value {
     ($($ty:ty),+ $(,)?) => {
@@ -181,6 +316,42 @@ macro_rules! impl_unsigned_value {
 
 impl_signed_value!(i8, i16, i32, i64, isize);
 impl_unsigned_value!(u8, u16, u32, u64, usize);
+
+impl private::SealedFixed for f32 {
+    const FRACTION_BITS: u32 = 23;
+    const EXPONENT_BITS: u32 = 8;
+    const EXPONENT_BIAS: i32 = 127;
+
+    fn bits(self) -> u128 {
+        self.to_bits() as u128
+    }
+}
+
+impl FixedValue for f32 {}
+
+impl private::SealedFixed for f64 {
+    const FRACTION_BITS: u32 = 52;
+    const EXPONENT_BITS: u32 = 11;
+    const EXPONENT_BIAS: i32 = 1023;
+
+    fn bits(self) -> u128 {
+        self.to_bits() as u128
+    }
+}
+
+impl FixedValue for f64 {}
+
+impl private::SealedFixed for f128::f128 {
+    const FRACTION_BITS: u32 = 112;
+    const EXPONENT_BITS: u32 = 15;
+    const EXPONENT_BIAS: i32 = 16383;
+
+    fn bits(self) -> u128 {
+        u128::from_ne_bytes(self.into_inner())
+    }
+}
+
+impl FixedValue for f128::f128 {}
 
 /// Wraps a signed primitive for C `printf`-compatible `d` or `i` formatting.
 ///
@@ -267,6 +438,291 @@ impl<T: UnsignedValue> fmt::UpperHex for Unsigned<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write_integer(f, self.value.to_u128(), false, false, Base::UpperHex)
     }
+}
+
+/// Wraps a floating-point primitive for C `printf`-compatible `f` formatting.
+///
+/// The wrapper supplies C's default precision of six, exact binary128
+/// formatting, lowercase nonfinite spelling, alternate form at precision zero,
+/// and [`Fixed::space_sign`]. Native Rust formatting is already exact for
+/// finite `f32` and `f64` values when an explicit nonzero precision is present
+/// and none of those wrapper-only behaviors is needed. See the [module
+/// documentation](self) for paired Rust and C examples of every supported type,
+/// spelling, and flag.
+pub fn fixed<T: FixedValue>(value: T) -> Fixed<T> {
+    Fixed {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` lowercase fixed-point formatting.
+#[derive(Clone, Copy)]
+pub struct Fixed<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> Fixed<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{}", fixed(1.25_f32).space_sign())` is equivalent to
+    /// `printf("% f", (double)1.25f)`, while formatting the same wrapper with
+    /// `{:+}` is equivalent to `printf("%+ f", (double)1.25f)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::Display for Fixed<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_fixed(
+            f,
+            FloatParts::from_value(self.value),
+            self.space_sign,
+            false,
+        )
+    }
+}
+
+/// Wraps a floating-point primitive for C `printf`-compatible `F` formatting.
+///
+/// This has the same fixed-point semantics as [`fixed`] and uses uppercase
+/// `INF` and `NAN`. See the [module documentation](self) for paired Rust and C
+/// examples of `%F`, `%lF`, `%LF`, and every supported flag.
+pub fn fixed_upper<T: FixedValue>(value: T) -> FixedUpper<T> {
+    FixedUpper {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` uppercase fixed-point formatting.
+#[derive(Clone, Copy)]
+pub struct FixedUpper<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> FixedUpper<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{}", fixed_upper(1.25_f64).space_sign())` is equivalent to
+    /// `printf("% F", 1.25)`, while formatting the same wrapper with `{:+}` is
+    /// equivalent to `printf("%+ F", 1.25)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::Display for FixedUpper<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_fixed(f, FloatParts::from_value(self.value), self.space_sign, true)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum FloatParts {
+    Finite {
+        negative: bool,
+        significand: u128,
+        binary_exponent: i32,
+    },
+    Infinite {
+        negative: bool,
+    },
+    Nan {
+        negative: bool,
+    },
+}
+
+impl FloatParts {
+    fn from_value<T: FixedValue>(value: T) -> Self {
+        Self::from_ieee_bits(
+            value.bits(),
+            T::FRACTION_BITS,
+            T::EXPONENT_BITS,
+            T::EXPONENT_BIAS,
+        )
+    }
+
+    fn from_ieee_bits(
+        bits: u128,
+        fraction_bits: u32,
+        exponent_bits: u32,
+        exponent_bias: i32,
+    ) -> Self {
+        let negative = bits >> (fraction_bits + exponent_bits) != 0;
+        let exponent_mask = (1_u128 << exponent_bits) - 1;
+        let exponent_field = (bits >> fraction_bits) & exponent_mask;
+        let fraction_mask = (1_u128 << fraction_bits) - 1;
+        let fraction = bits & fraction_mask;
+
+        if exponent_field == exponent_mask {
+            return if fraction == 0 {
+                Self::Infinite { negative }
+            } else {
+                Self::Nan { negative }
+            };
+        }
+
+        let (significand, unbiased_exponent) = if exponent_field == 0 {
+            (fraction, 1 - exponent_bias)
+        } else {
+            (
+                (1_u128 << fraction_bits) | fraction,
+                exponent_field as i32 - exponent_bias,
+            )
+        };
+        Self::Finite {
+            negative,
+            significand,
+            binary_exponent: unbiased_exponent - fraction_bits as i32,
+        }
+    }
+}
+
+fn write_fixed(
+    f: &mut Formatter<'_>,
+    parts: FloatParts,
+    space_sign: bool,
+    uppercase: bool,
+) -> fmt::Result {
+    let (negative, body, finite) = match parts {
+        FloatParts::Finite {
+            negative,
+            significand,
+            binary_exponent,
+        } => (
+            negative,
+            fixed_body(
+                significand,
+                binary_exponent,
+                f.precision().unwrap_or(6),
+                f.alternate(),
+            ),
+            true,
+        ),
+        FloatParts::Infinite { negative } => (
+            negative,
+            if uppercase { "INF" } else { "inf" }.to_owned(),
+            false,
+        ),
+        FloatParts::Nan { negative } => (
+            negative,
+            if uppercase { "NAN" } else { "nan" }.to_owned(),
+            false,
+        ),
+    };
+
+    let sign = if negative {
+        "-"
+    } else if f.sign_plus() {
+        "+"
+    } else if space_sign {
+        " "
+    } else {
+        ""
+    };
+    let content_width = sign.len() + body.len();
+    let padding = f.width().unwrap_or_default().saturating_sub(content_width);
+    let alignment = f.align().unwrap_or(Alignment::Right);
+    let zero_padding = finite && f.sign_aware_zero_pad() && alignment == Alignment::Right;
+    let (left_spaces, right_spaces) = if zero_padding {
+        (0, 0)
+    } else {
+        match alignment {
+            Alignment::Left => (0, padding),
+            Alignment::Right => (padding, 0),
+            Alignment::Center => (padding / 2, padding - padding / 2),
+        }
+    };
+
+    write_repeated(f, SPACE_PADDING, left_spaces)?;
+    f.write_str(sign)?;
+    if zero_padding {
+        write_repeated(f, ZERO_PADDING, padding)?;
+    }
+    f.write_str(&body)?;
+    write_repeated(f, SPACE_PADDING, right_spaces)
+}
+
+fn fixed_body(
+    significand: u128,
+    binary_exponent: i32,
+    precision: usize,
+    alternate: bool,
+) -> String {
+    let scaled = scale_and_round(significand, binary_exponent, precision);
+    let digits = scaled.to_str_radix(10);
+
+    if precision == 0 {
+        if alternate {
+            return digits + ".";
+        }
+        return digits;
+    }
+
+    if digits.len() > precision {
+        let point = digits.len() - precision;
+        let mut result = String::with_capacity(digits.len() + 1);
+        result.push_str(&digits[..point]);
+        result.push('.');
+        result.push_str(&digits[point..]);
+        result
+    } else {
+        let leading_zeros = precision - digits.len();
+        let mut result = String::with_capacity(precision + 2);
+        result.push_str("0.");
+        result.extend(std::iter::repeat_n('0', leading_zeros));
+        result.push_str(&digits);
+        result
+    }
+}
+
+fn scale_and_round(significand: u128, binary_exponent: i32, precision: usize) -> BigUint {
+    if significand == 0 {
+        return BigUint::from(0_u8);
+    }
+
+    let mut numerator = BigUint::from(significand) * pow_five(precision);
+    if binary_exponent >= 0 {
+        return numerator << (precision + binary_exponent as usize);
+    }
+
+    let denominator_shift = (-binary_exponent) as usize;
+    if precision >= denominator_shift {
+        return numerator << (precision - denominator_shift);
+    }
+
+    let shift = denominator_shift - precision;
+    let quotient = &numerator >> shift;
+    numerator -= &quotient << shift;
+    let halfway = BigUint::from(1_u8) << (shift - 1);
+    if numerator > halfway || (numerator == halfway && quotient.bit(0)) {
+        quotient + 1_u8
+    } else {
+        quotient
+    }
+}
+
+fn pow_five(mut exponent: usize) -> BigUint {
+    let mut result = BigUint::from(1_u8);
+    let mut base = BigUint::from(5_u8);
+    while exponent != 0 {
+        if exponent & 1 != 0 {
+            result *= &base;
+        }
+        exponent >>= 1;
+        if exponent != 0 {
+            base = &base * &base;
+        }
+    }
+    result
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]

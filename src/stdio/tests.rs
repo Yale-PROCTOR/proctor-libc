@@ -1,6 +1,9 @@
 use std::io::{self, BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::process::{Command, Stdio};
 
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, RngSeed};
+
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
 #[cfg(target_os = "linux")]
@@ -14,7 +17,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::printf::{signed, unsigned};
+use super::printf::{fixed, fixed_upper, signed, unsigned};
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
@@ -164,6 +167,202 @@ fn integer_padding_larger_than_an_internal_chunk_is_complete() {
     assert_eq!(zero_padded.len(), 130);
     assert!(zero_padded.starts_with(&"0".repeat(128)));
     assert!(zero_padded.ends_with("2a"));
+}
+
+#[test]
+fn fixed_formats_every_supported_type_without_conversion_at_the_call_site() {
+    assert_eq!(format!("{}", fixed(1.25_f32)), "1.250000");
+    assert_eq!(format!("{}", fixed(1.25_f64)), "1.250000");
+    assert_eq!(format!("{}", fixed(f128::f128::new(1.25_f64))), "1.250000");
+
+    assert_eq!(format!("{}", fixed_upper(1.25_f32)), "1.250000");
+    assert_eq!(format!("{}", fixed_upper(1.25_f64)), "1.250000");
+    assert_eq!(
+        format!("{}", fixed_upper(f128::f128::new(1.25_f64))),
+        "1.250000"
+    );
+}
+
+#[test]
+fn fixed_precision_rounds_to_nearest_with_ties_to_even() {
+    for output in [
+        format!("{:.0}", fixed(2.5_f32)),
+        format!("{:.0}", fixed(2.5_f64)),
+        format!("{:.0}", fixed(f128::f128::new(2.5_f64))),
+    ] {
+        assert_eq!(output, "2");
+    }
+    for output in [
+        format!("{:.0}", fixed(3.5_f32)),
+        format!("{:.0}", fixed(3.5_f64)),
+        format!("{:.0}", fixed(f128::f128::new(3.5_f64))),
+    ] {
+        assert_eq!(output, "4");
+    }
+
+    assert_eq!(format!("{:.2}", fixed(1.125_f64)), "1.12");
+    assert_eq!(format!("{:.2}", fixed(1.375_f64)), "1.38");
+    assert_eq!(format!("{:.2}", fixed(9.999_f64)), "10.00");
+    assert_eq!(
+        format!("{:.2}", fixed(f128::f128::parse("1.125").unwrap())),
+        "1.12"
+    );
+    assert_eq!(
+        format!("{:.2}", fixed(f128::f128::parse("1.375").unwrap())),
+        "1.38"
+    );
+}
+
+#[test]
+fn fixed_sign_flags_and_negative_zero_follow_printf() {
+    assert_eq!(format!("{}", fixed(0.0_f64)), "0.000000");
+    assert_eq!(format!("{}", fixed(-0.0_f64)), "-0.000000");
+    assert_eq!(format!("{:+}", fixed(0.0_f64)), "+0.000000");
+    assert_eq!(format!("{}", fixed(0.0_f64).space_sign()), " 0.000000");
+    assert_eq!(format!("{:+}", fixed(0.0_f64).space_sign()), "+0.000000");
+    assert_eq!(format!("{}", fixed(-0.0_f64).space_sign()), "-0.000000");
+
+    assert_eq!(format!("{}", fixed(f128::f128::NEG_ZERO)), "-0.000000");
+    assert_eq!(
+        format!("{}", fixed_upper(f128::f128::ZERO).space_sign()),
+        " 0.000000"
+    );
+}
+
+#[test]
+fn fixed_width_alignment_zero_padding_and_alternate_form_follow_printf() {
+    assert_eq!(format!("{:8.2}", fixed(1.25_f64)), "    1.25");
+    assert_eq!(format!("{:<8.2}", fixed(1.25_f64)), "1.25    ");
+    assert_eq!(format!("{:08.2}", fixed(-1.25_f64)), "-0001.25");
+    assert_eq!(format!("{:+08.2}", fixed(1.25_f64)), "+0001.25");
+    assert_eq!(format!("{:08.2}", fixed(1.25_f64).space_sign()), " 0001.25");
+    assert_eq!(format!("{:<08.2}", fixed(1.25_f64)), "1.25    ");
+    assert_eq!(format!("{:#.0}", fixed(2.0_f64)), "2.");
+    assert_eq!(format!("{:#08.0}", fixed(2.0_f64)), "0000002.");
+    assert_eq!(format!("{:<#08.0}", fixed(2.0_f64)), "2.      ");
+    assert_eq!(format!("{:.0}", fixed(2.0_f64)), "2");
+}
+
+#[test]
+fn fixed_handles_finite_extrema_and_subnormals() {
+    assert_eq!(format!("{:.6}", fixed(f32::MIN_POSITIVE)), "0.000000");
+    assert_eq!(format!("{:.6}", fixed(f32::from_bits(1))), "0.000000");
+    assert_eq!(format!("{:.6}", fixed(f64::MIN_POSITIVE)), "0.000000");
+    assert_eq!(format!("{:.6}", fixed(f64::from_bits(1))), "0.000000");
+    assert_eq!(
+        format!("{:.6}", fixed(f128::f128::MIN_POSITIVE)),
+        "0.000000"
+    );
+    assert_eq!(
+        format!("{:.6}", fixed(f128::f128::MIN_POSITIVE_SUBNORMAL)),
+        "0.000000"
+    );
+
+    assert!(
+        format!("{:.0}", fixed(f32::MAX)).starts_with("340282346638528859811704183484516925440")
+    );
+    assert!(
+        format!("{:.0}", fixed(f64::MAX)).starts_with("179769313486231570814527423731704356798")
+    );
+    let f128_max = format!("{:.0}", fixed(f128::f128::MAX));
+    assert_eq!(f128_max.len(), 4933);
+    assert!(f128_max.starts_with("118973149535723176508575932662800701619"));
+}
+
+#[test]
+fn fixed_nonfinite_spelling_signs_and_padding_follow_printf() {
+    assert_eq!(format!("{}", fixed(f64::INFINITY)), "inf");
+    assert_eq!(format!("{}", fixed(f64::NEG_INFINITY)), "-inf");
+    assert_eq!(format!("{}", fixed(f64::NAN)), "nan");
+    assert_eq!(format!("{}", fixed_upper(f64::INFINITY)), "INF");
+    assert_eq!(format!("{}", fixed_upper(f64::NEG_INFINITY)), "-INF");
+    assert_eq!(format!("{}", fixed_upper(f64::NAN)), "NAN");
+    assert_eq!(format!("{:+}", fixed(f64::INFINITY)), "+inf");
+    assert_eq!(format!("{}", fixed(f64::NAN).space_sign()), " nan");
+    assert_eq!(format!("{:08}", fixed(f64::INFINITY)), "     inf");
+    assert_eq!(format!("{:<8}", fixed_upper(f64::NAN)), "NAN     ");
+
+    assert_eq!(format!("{}", fixed(f128::f128::INFINITY)), "inf");
+    assert_eq!(format!("{}", fixed_upper(f128::f128::NEG_INFINITY)), "-INF");
+    assert_eq!(format!("{}", fixed(f128::f128::NAN)), "nan");
+}
+
+#[test]
+fn fixed_large_width_and_precision_are_complete() {
+    let precise = format!("{:.129}", fixed(1.25_f64));
+    assert_eq!(precise.len(), 131);
+    assert!(precise.starts_with("1.25"));
+    assert!(precise.ends_with(&"0".repeat(127)));
+
+    let padded = format!("{:200.129}", fixed(-1.25_f64));
+    assert_eq!(padded.len(), 200);
+    assert!(padded.starts_with(&" ".repeat(68)));
+    assert!(padded.ends_with(&precise));
+}
+
+#[test]
+fn fixed_is_consistent_across_exact_cross_type_conversions() {
+    for value in [-16.0_f32, -1.25, -0.0, 0.0, 1.25, 16.0, 65_536.0] {
+        let as_f64 = f64::from(value);
+        let as_f128 = f128::f128::new(as_f64);
+        for precision in [0, 1, 2, 6, 20] {
+            let from_f32 = format!("{value:.precision$}", value = fixed(value));
+            let from_f64 = format!("{value:.precision$}", value = fixed(as_f64));
+            let from_f128 = format!("{value:.precision$}", value = fixed(as_f128));
+            assert_eq!(from_f32, from_f64);
+            assert_eq!(from_f64, from_f128);
+        }
+    }
+}
+
+fn f128_from_bits(bits: u128) -> f128::f128 {
+    // SAFETY: `f128::f128` is a `repr(C)` wrapper around `[u8; 16]`, and every
+    // IEEE binary128 bit pattern is a valid floating-point representation.
+    unsafe { std::mem::transmute(bits.to_ne_bytes()) }
+}
+
+fn f128_invariant_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: 512,
+        failure_persistence: None,
+        rng_seed: RngSeed::Fixed(0x0046_3132_385f_464d),
+        ..ProptestConfig::default()
+    }
+}
+
+proptest! {
+    #![proptest_config(f128_invariant_config())]
+
+    // These properties validate representation-independent invariants. Host
+    // `%Lf` is deliberately not used as an oracle because its ABI may not be
+    // IEEE binary128.
+    #[test]
+    fn generated_f128_values_satisfy_fixed_format_invariants(
+        bits in any::<u128>(),
+        precision in 0_usize..=20,
+    ) {
+        let value = f128_from_bits(bits);
+        let lower = format!("{value:.precision$}", value = fixed(value));
+        let upper = format!("{value:.precision$}", value = fixed_upper(value));
+        prop_assert_eq!(lower.to_ascii_uppercase(), upper);
+
+        let negative = bits >> 127 != 0;
+        prop_assert_eq!(lower.starts_with('-'), negative);
+
+        let exponent_field = (bits >> 112) & 0x7fff;
+        if exponent_field != 0x7fff {
+            let magnitude = lower.strip_prefix('-').unwrap_or(&lower);
+            if precision == 0 {
+                prop_assert!(!magnitude.contains('.'));
+            } else {
+                let (_, fraction) = magnitude
+                    .split_once('.')
+                    .expect("finite nonzero precision has a radix point");
+                prop_assert_eq!(fraction.len(), precision);
+                prop_assert!(fraction.bytes().all(|byte| byte.is_ascii_digit()));
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
