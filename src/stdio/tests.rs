@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use super::printf::{signed, unsigned};
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
@@ -25,6 +26,141 @@ const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
 fn unwrap_stdio<T>((value, status): (T, io::Result<()>)) -> T {
     status.unwrap();
     value
+}
+
+#[test]
+fn signed_formats_every_supported_primitive_without_widening_at_the_call_site() {
+    macro_rules! assert_type {
+        ($ty:ty) => {
+            for value in [<$ty>::MIN, 0, <$ty>::MAX] {
+                assert_eq!(format!("{}", signed(value)), format!("{value}"));
+                assert_eq!(format!("{:+}", signed(value)), format!("{value:+}"));
+                assert_eq!(format!("{:30}", signed(value)), format!("{value:30}"));
+                assert_eq!(format!("{:<30}", signed(value)), format!("{value:<30}"));
+                assert_eq!(format!("{:030}", signed(value)), format!("{value:030}"));
+            }
+        };
+    }
+
+    assert_type!(i8);
+    assert_type!(i16);
+    assert_type!(i32);
+    assert_type!(i64);
+    assert_type!(isize);
+}
+
+#[test]
+fn unsigned_formats_every_supported_primitive_without_widening_at_the_call_site() {
+    macro_rules! assert_type {
+        ($ty:ty) => {
+            for value in [<$ty>::MIN, 1, <$ty>::MAX] {
+                assert_eq!(format!("{}", unsigned(value)), format!("{value}"));
+                assert_eq!(format!("{:o}", unsigned(value)), format!("{value:o}"));
+                assert_eq!(format!("{:x}", unsigned(value)), format!("{value:x}"));
+                assert_eq!(format!("{:X}", unsigned(value)), format!("{value:X}"));
+                assert_eq!(format!("{:30}", unsigned(value)), format!("{value:30}"));
+                assert_eq!(format!("{:<30}", unsigned(value)), format!("{value:<30}"));
+                assert_eq!(format!("{:030X}", unsigned(value)), format!("{value:030X}"));
+            }
+        };
+    }
+
+    assert_type!(u8);
+    assert_type!(u16);
+    assert_type!(u32);
+    assert_type!(u64);
+    assert_type!(usize);
+}
+
+#[test]
+fn signed_precision_has_printf_minimum_digit_semantics() {
+    assert_eq!(format!("{:.0}", signed(0_i8)), "");
+    assert_eq!(format!("{:+.0}", signed(0_i8)), "+");
+    assert_eq!(format!("{:.0}", signed(0_i8).space_sign()), " ");
+    assert_eq!(format!("{:.0}", signed(1_i8)), "1");
+    assert_eq!(format!("{:.5}", signed(42_i16)), "00042");
+    assert_eq!(format!("{:.5}", signed(-42_i16)), "-00042");
+    assert_eq!(format!("{:.2}", signed(123_i32)), "123");
+}
+
+#[test]
+fn signed_sign_flags_follow_printf_precedence() {
+    assert_eq!(format!("{}", signed(42_i32).space_sign()), " 42");
+    assert_eq!(format!("{}", signed(0_i32).space_sign()), " 0");
+    assert_eq!(format!("{}", signed(-42_i32).space_sign()), "-42");
+    assert_eq!(format!("{:+}", signed(42_i32).space_sign()), "+42");
+    assert_eq!(format!("{:+}", signed(-42_i32).space_sign()), "-42");
+}
+
+#[test]
+fn signed_width_alignment_zero_padding_and_precision_interact_like_printf() {
+    assert_eq!(format!("{:8}", signed(42_i32)), "      42");
+    assert_eq!(format!("{:<8}", signed(42_i32)), "42      ");
+    assert_eq!(format!("{:08}", signed(-42_i32)), "-0000042");
+    assert_eq!(format!("{:+08}", signed(42_i32)), "+0000042");
+    assert_eq!(format!("{:08}", signed(42_i32).space_sign()), " 0000042");
+    assert_eq!(format!("{:<08}", signed(42_i32)), "42      ");
+
+    // Integer precision disables the `0` flag, while the sign remains part of
+    // the field width.
+    assert_eq!(format!("{:08.5}", signed(42_i32)), "   00042");
+    assert_eq!(format!("{:+08.3}", signed(42_i32)), "    +042");
+    assert_eq!(format!("{:<8.5}", signed(-42_i32)), "-00042  ");
+}
+
+#[test]
+fn unsigned_precision_applies_to_every_conversion() {
+    assert_eq!(format!("{:.0}", unsigned(0_u8)), "");
+    assert_eq!(format!("{:.5}", unsigned(42_u16)), "00042");
+    assert_eq!(format!("{:.5o}", unsigned(0o52_u16)), "00052");
+    assert_eq!(format!("{:.5x}", unsigned(0x2a_u16)), "0002a");
+    assert_eq!(format!("{:.5X}", unsigned(0x2a_u16)), "0002A");
+    assert_eq!(format!("{:.2x}", unsigned(0x123_u16)), "123");
+}
+
+#[test]
+fn unsigned_alternate_octal_uses_a_leading_zero_digit() {
+    assert_eq!(format!("{:#o}", unsigned(0_u32)), "0");
+    assert_eq!(format!("{:#o}", unsigned(8_u32)), "010");
+    assert_eq!(format!("{:#.0o}", unsigned(0_u32)), "0");
+    assert_eq!(format!("{:#.2o}", unsigned(8_u32)), "010");
+    assert_eq!(format!("{:#.3o}", unsigned(8_u32)), "010");
+}
+
+#[test]
+fn unsigned_alternate_hexadecimal_omits_the_prefix_for_zero() {
+    assert_eq!(format!("{:#x}", unsigned(0_u32)), "0");
+    assert_eq!(format!("{:#X}", unsigned(0_u32)), "0");
+    assert_eq!(format!("{:#.0x}", unsigned(0_u32)), "");
+    assert_eq!(format!("{:#.0X}", unsigned(0_u32)), "");
+    assert_eq!(format!("{:#x}", unsigned(0x2a_u32)), "0x2a");
+    assert_eq!(format!("{:#X}", unsigned(0x2a_u32)), "0X2A");
+}
+
+#[test]
+fn unsigned_width_zero_padding_precision_and_prefixes_interact_like_printf() {
+    assert_eq!(format!("{:8.5}", unsigned(42_u32)), "   00042");
+    assert_eq!(format!("{:08.5}", unsigned(42_u32)), "   00042");
+    assert_eq!(format!("{:<8.5}", unsigned(42_u32)), "00042   ");
+    assert_eq!(format!("{:#08x}", unsigned(0x2a_u32)), "0x00002a");
+    assert_eq!(format!("{:#08X}", unsigned(0x2a_u32)), "0X00002A");
+    assert_eq!(format!("{:#08.4x}", unsigned(0x2a_u32)), "  0x002a");
+    assert_eq!(format!("{:#08.0x}", unsigned(0_u32)), "        ");
+    assert_eq!(format!("{:#05.0o}", unsigned(0_u32)), "    0");
+    assert_eq!(format!("{:<#8x}", unsigned(0x2a_u32)), "0x2a    ");
+}
+
+#[test]
+fn integer_padding_larger_than_an_internal_chunk_is_complete() {
+    let space_padded = format!("{:130}", signed(42_i32));
+    assert_eq!(space_padded.len(), 130);
+    assert!(space_padded.starts_with(&" ".repeat(128)));
+    assert!(space_padded.ends_with("42"));
+
+    let zero_padded = format!("{:0130x}", unsigned(0x2a_u32));
+    assert_eq!(zero_padded.len(), 130);
+    assert!(zero_padded.starts_with(&"0".repeat(128)));
+    assert!(zero_padded.ends_with("2a"));
 }
 
 #[cfg(target_os = "linux")]

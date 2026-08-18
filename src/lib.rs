@@ -15,6 +15,7 @@ pub mod stdlib;
 pub mod string;
 pub mod strings;
 
+pub use stdio::printf;
 pub use stdio::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
