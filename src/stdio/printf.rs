@@ -1,6 +1,24 @@
 //! Formatting adapters for C `printf` semantics that Rust formatting does not
 //! express directly.
 //!
+//! The adapters cover the integer conversions `d`, `i`, `o`, `u`, `x`, and
+//! `X`, including the `hh`, `h`, `l`, and `ll` length conversions. They also
+//! cover the floating conversions `f`, `F`, `e`, `E`, `g`, `G`, `a`, and `A`.
+//! A lowercase `l` has the same `double` semantics as no floating length
+//! modifier, while `L` uses the project's [`f128::f128`] mapping for C `long
+//! double`; its output may differ from a host `long double` with another
+//! representation. The `s` conversion is supported when the bytes selected by
+//! its precision and first NUL form valid UTF-8.
+//!
+//! Static widths and precisions are supported for all of these conversions.
+//! The relevant uses of the `-`, `+`, space, `#`, and `0` flags are supported;
+//! the locale-dependent apostrophe (`'`) flag is not. Floating formatting uses
+//! the C locale and round-to-nearest, ties-to-even rather than tracking the
+//! active process locale or floating-point rounding mode. These adapters do not
+//! parse format strings: callers select the wrapper and Rust formatting trait
+//! corresponding to the source conversion and pass values after any C length
+//! conversion.
+//!
 //! Use [`signed`] for the `d` and `i` conversions and [`unsigned`] for the
 //! `u`, `o`, `x`, and `X` conversions. The wrappers preserve the input's Rust
 //! primitive type; the value passed to a wrapper should therefore be the value
