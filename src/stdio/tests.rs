@@ -21,6 +21,9 @@ use super::{
 #[cfg(target_os = "linux")]
 use super::{remove, rename};
 
+#[cfg(unix)]
+mod printf_differential;
+
 const STANDARD_STREAM_CHILD: &str = "PROCTOR_LIBC_STANDARD_STREAM_CHILD";
 
 fn unwrap_stdio<T>((value, status): (T, io::Result<()>)) -> T {
