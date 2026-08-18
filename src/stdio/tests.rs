@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use super::printf::{fixed, fixed_upper, scientific, signed, unsigned};
+use super::printf::{fixed, fixed_upper, general, general_upper, scientific, signed, unsigned};
 use super::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
 };
@@ -595,6 +595,222 @@ proptest! {
                     .bytes()
                     .filter(|&byte| byte != b'.')
                     .all(|byte| byte.is_ascii_digit()));
+            }
+        }
+    }
+}
+
+#[test]
+fn general_formats_every_supported_type_without_conversion_at_the_call_site() {
+    assert_eq!(format!("{}", general(1.25_f32)), "1.25");
+    assert_eq!(format!("{}", general(1.25_f64)), "1.25");
+    assert_eq!(format!("{}", general(f128::f128::new(1.25_f64))), "1.25");
+
+    assert_eq!(format!("{}", general_upper(1.0e6_f32)), "1E+06");
+    assert_eq!(format!("{}", general_upper(1.0e6_f64)), "1E+06");
+    assert_eq!(
+        format!("{}", general_upper(f128::f128::new(1.0e6_f64))),
+        "1E+06"
+    );
+}
+
+#[test]
+fn general_precision_is_significant_digits_and_zero_means_one() {
+    assert_eq!(format!("{}", general(123.45_f64)), "123.45");
+    assert_eq!(format!("{:.0}", general(12.5_f64)), "1e+01");
+    assert_eq!(format!("{:.1}", general(12.5_f64)), "1e+01");
+    assert_eq!(format!("{:.2}", general(12.5_f64)), "12");
+    assert_eq!(format!("{:.3}", general(12.5_f64)), "12.5");
+    assert_eq!(format!("{:.6}", general(123.45_f64)), "123.45");
+}
+
+#[test]
+fn general_style_selection_uses_the_post_rounding_decimal_exponent() {
+    assert_eq!(format!("{:.4}", general(0.000_1_f64)), "0.0001");
+    assert_eq!(format!("{:.4}", general(0.000_01_f64)), "1e-05");
+    assert_eq!(format!("{:.6}", general(99_999.0_f64)), "99999");
+    assert_eq!(format!("{:.6}", general(100_000.0_f64)), "100000");
+    assert_eq!(format!("{:.6}", general(1_000_000.0_f64)), "1e+06");
+
+    assert_eq!(format!("{:.4}", general(9_999.6_f64)), "1e+04");
+    assert_eq!(format!("{:#.4}", general(9_999.6_f64)), "1.000e+04");
+    assert_eq!(format!("{:.4}", general(0.000_099_996_f64)), "0.0001");
+    assert_eq!(format!("{:#.4}", general(0.000_099_996_f64)), "0.0001000");
+}
+
+#[test]
+fn general_alternate_form_retains_significant_zeros_across_dr_233_boundary() {
+    for output in [
+        format!("{:#.6}", general(999_999.5_f32)),
+        format!("{:#.6}", general(999_999.5_f64)),
+        format!("{:#.6}", general(f128::f128::new(999_999.5_f64))),
+    ] {
+        assert_eq!(output, "1.00000e+06");
+    }
+    for output in [
+        format!("{:#.6}", general(-999_999.5_f32)),
+        format!("{:#.6}", general(-999_999.5_f64)),
+        format!("{:#.6}", general(f128::f128::new(-999_999.5_f64))),
+    ] {
+        assert_eq!(output, "-1.00000e+06");
+    }
+    for output in [
+        format!("{:#.6}", general_upper(999_999.5_f32)),
+        format!("{:#.6}", general_upper(999_999.5_f64)),
+        format!("{:#.6}", general_upper(f128::f128::new(999_999.5_f64))),
+    ] {
+        assert_eq!(output, "1.00000E+06");
+    }
+    for output in [
+        format!("{:#.6}", general_upper(-999_999.5_f32)),
+        format!("{:#.6}", general_upper(-999_999.5_f64)),
+        format!("{:#.6}", general_upper(f128::f128::new(-999_999.5_f64))),
+    ] {
+        assert_eq!(output, "-1.00000E+06");
+    }
+}
+
+#[test]
+fn general_rounds_to_nearest_with_ties_to_even() {
+    for output in [
+        format!("{:.2}", general(1.25_f32)),
+        format!("{:.2}", general(1.25_f64)),
+        format!("{:.2}", general(f128::f128::new(1.25_f64))),
+    ] {
+        assert_eq!(output, "1.2");
+    }
+    for output in [
+        format!("{:.2}", general(1.75_f32)),
+        format!("{:.2}", general(1.75_f64)),
+        format!("{:.2}", general(f128::f128::new(1.75_f64))),
+    ] {
+        assert_eq!(output, "1.8");
+    }
+    assert_eq!(format!("{:.1}", general(9.5_f64)), "1e+01");
+}
+
+#[test]
+fn general_trims_fractional_zeros_unless_alternate_form_is_requested() {
+    assert_eq!(format!("{:.6}", general(123.0_f64)), "123");
+    assert_eq!(format!("{:#.6}", general(123.0_f64)), "123.000");
+    assert_eq!(format!("{:.6}", general(1.23e10_f64)), "1.23e+10");
+    assert_eq!(format!("{:#.6}", general(1.23e10_f64)), "1.23000e+10");
+    assert_eq!(format!("{:#.1}", general(2.0_f64)), "2.");
+}
+
+#[test]
+fn general_sign_width_alignment_and_zero_padding_follow_printf() {
+    assert_eq!(format!("{}", general(-0.0_f64)), "-0");
+    assert_eq!(format!("{:+}", general(0.0_f64)), "+0");
+    assert_eq!(format!("{}", general(0.0_f64).space_sign()), " 0");
+    assert_eq!(format!("{:+}", general(0.0_f64).space_sign()), "+0");
+    assert_eq!(format!("{:10.4}", general(12.5_f64)), "      12.5");
+    assert_eq!(format!("{:<10.4}", general(12.5_f64)), "12.5      ");
+    assert_eq!(format!("{:010.4}", general(-12.5_f64)), "-0000012.5");
+    assert_eq!(format!("{:+010.4}", general(12.5_f64)), "+0000012.5");
+    assert_eq!(
+        format!("{:010.4}", general(12.5_f64).space_sign()),
+        " 0000012.5"
+    );
+}
+
+#[test]
+fn general_handles_finite_extrema_subnormals_and_exponent_widths() {
+    assert_eq!(format!("{}", general(f32::from_bits(1))), "1.4013e-45");
+    assert_eq!(format!("{}", general(f32::MAX)), "3.40282e+38");
+    assert_eq!(format!("{}", general(f64::from_bits(1))), "4.94066e-324");
+    assert_eq!(format!("{}", general(f64::MAX)), "1.79769e+308");
+    assert_eq!(
+        format!("{}", general(f128::f128::MIN_POSITIVE_SUBNORMAL)),
+        "6.47518e-4966"
+    );
+    assert_eq!(
+        format!("{}", general(f128_from_bits(1_u128 << 112))),
+        "3.3621e-4932"
+    );
+    assert_eq!(
+        format!("{}", general_upper(f128::f128::MAX)),
+        "1.18973E+4932"
+    );
+}
+
+#[test]
+fn general_nonfinite_spelling_signs_and_padding_follow_printf() {
+    assert_eq!(format!("{}", general(f64::INFINITY)), "inf");
+    assert_eq!(format!("{}", general(f64::NEG_INFINITY)), "-inf");
+    assert_eq!(format!("{}", general(f64::NAN)), "nan");
+    assert_eq!(format!("{}", general_upper(f64::INFINITY)), "INF");
+    assert_eq!(format!("{}", general_upper(f64::NEG_INFINITY)), "-INF");
+    assert_eq!(format!("{}", general_upper(f64::NAN)), "NAN");
+    assert_eq!(format!("{:+}", general(f64::INFINITY)), "+inf");
+    assert_eq!(format!("{}", general(f64::NAN).space_sign()), " nan");
+    assert_eq!(format!("{:08}", general(f64::INFINITY)), "     inf");
+    assert_eq!(format!("{:<8}", general_upper(f64::NAN)), "NAN     ");
+
+    assert_eq!(format!("{}", general(f128::f128::INFINITY)), "inf");
+    assert_eq!(
+        format!("{}", general_upper(f128::f128::NEG_INFINITY)),
+        "-INF"
+    );
+}
+
+#[test]
+fn general_large_width_and_precision_are_complete() {
+    let precise = format!("{:#.129}", general(1.25_f64));
+    assert_eq!(precise.len(), 130);
+    assert!(precise.starts_with("1.25"));
+    assert!(precise.ends_with(&"0".repeat(126)));
+
+    let padded = format!("{:200.129}", general(-1.25_f64));
+    assert_eq!(padded.len(), 200);
+    assert!(padded.starts_with(&" ".repeat(195)));
+    assert!(padded.ends_with("-1.25"));
+}
+
+#[test]
+fn general_is_consistent_across_exact_cross_type_conversions() {
+    for value in [-16.0_f32, -1.25, -0.0, 0.0, 1.25, 16.0, 65_536.0] {
+        let as_f64 = f64::from(value);
+        let as_f128 = f128::f128::new(as_f64);
+        for precision in [0, 1, 2, 6, 20] {
+            let from_f32 = format!("{value:.precision$}", value = general(value));
+            let from_f64 = format!("{value:.precision$}", value = general(as_f64));
+            let from_f128 = format!("{value:.precision$}", value = general(as_f128));
+            assert_eq!(from_f32, from_f64);
+            assert_eq!(from_f64, from_f128);
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(f128_invariant_config())]
+
+    // Host `%Lg` is deliberately not used as an oracle because its ABI may
+    // not be IEEE binary128.
+    #[test]
+    fn generated_f128_values_satisfy_general_format_invariants(
+        bits in any::<u128>(),
+        precision in 0_usize..=20,
+    ) {
+        let value = f128_from_bits(bits);
+        let lower = format!("{value:.precision$}", value = general(value));
+        let upper = format!("{value:.precision$}", value = general_upper(value));
+        prop_assert_eq!(lower.to_ascii_uppercase(), upper.as_str());
+
+        let negative = bits >> 127 != 0;
+        prop_assert_eq!(lower.starts_with('-'), negative);
+
+        let exponent_field = (bits >> 112) & 0x7fff;
+        if exponent_field != 0x7fff {
+            let magnitude = lower.strip_prefix('-').unwrap_or(&lower);
+            prop_assert!(!magnitude.ends_with('.'));
+            if let Some((mantissa, exponent)) = magnitude.split_once('e') {
+                prop_assert!(matches!(exponent.as_bytes().first(), Some(b'+') | Some(b'-')));
+                prop_assert!(exponent[1..].len() >= 2);
+                prop_assert!(exponent[1..].bytes().all(|byte| byte.is_ascii_digit()));
+                prop_assert!(!mantissa.ends_with('0') || !mantissa.contains('.'));
+            } else if let Some((_, fraction)) = magnitude.split_once('.') {
+                prop_assert!(!fraction.ends_with('0'));
             }
         }
     }

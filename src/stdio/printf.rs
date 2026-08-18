@@ -327,11 +327,109 @@
 //! let _ = format!("{}", scientific(1.25_f64));
 //! ```
 //!
+//! Use [`general`] for the `g` conversion and [`general_upper`] for `G`.
+//! Rust has no corresponding general-format specifier, so the wrapper is
+//! always required at the format-specification level. A missing precision
+//! means six significant digits, while an explicit precision zero means one:
+//!
+//! ```
+//! use proctor_libc::printf::{general, general_upper};
+//!
+//! // printf("%g %G", 123.45, 1.0e6);
+//! assert_eq!(
+//!     format!("{} {}", general(123.45_f64), general_upper(1.0e6_f64)),
+//!     "123.45 1E+06",
+//! );
+//! // printf("%lg %lG", 123.45, 1.0e6);
+//! assert_eq!(
+//!     format!("{} {}", general(123.45_f64), general_upper(1.0e6_f64)),
+//!     "123.45 1E+06",
+//! );
+//! // printf("%.0g %.3g", 12.5, 12.5);
+//! assert_eq!(format!("{:.0} {:.3}", general(12.5_f64), general(12.5_f64)),
+//!            "1e+01 12.5");
+//! ```
+//!
+//! The conversion first rounds to the requested number of significant digits.
+//! It uses scientific notation when the resulting decimal exponent is less
+//! than `-4` or at least the precision, and fixed notation otherwise:
+//!
+//! ```
+//! use proctor_libc::printf::general;
+//!
+//! // printf("%.4g %.4g", 0.0001, 0.00001);
+//! assert_eq!(
+//!     format!("{:.4} {:.4}", general(0.0001_f64), general(0.00001_f64)),
+//!     "0.0001 1e-05",
+//! );
+//! // Rounding can change the exponent and therefore the selected style:
+//! // printf("%.4g", 9999.6);
+//! assert_eq!(format!("{:.4}", general(9999.6_f64)), "1e+04");
+//! ```
+//!
+//! Trailing fractional zeros and an unnecessary radix point are removed by
+//! default. C's `#` flag retains them:
+//!
+//! ```
+//! use proctor_libc::printf::{general, general_upper};
+//!
+//! // printf("%.6g %#.6g", 123.0, 123.0);
+//! assert_eq!(format!("{:.6} {:#.6}", general(123.0_f64), general(123.0_f64)),
+//!            "123 123.000");
+//! // printf("%.6G %#.6G", 1.23e10, 1.23e10);
+//! assert_eq!(
+//!     format!("{:.6} {:#.6}", general_upper(1.23e10_f64), general_upper(1.23e10_f64)),
+//!     "1.23E+10 1.23000E+10",
+//! );
+//! ```
+//!
+//! Rust width, left alignment, sign, alternate form, and zero padding map to
+//! C `width`, `-`, `+`, `#`, and `0`. Call [`General::space_sign`] or
+//! [`GeneralUpper::space_sign`] for C's space flag; `+` takes precedence:
+//!
+//! ```
+//! use proctor_libc::printf::general;
+//!
+//! // printf("%10.4g %-10.4g", 12.5, 12.5);
+//! assert_eq!(format!("{:10.4} {:<10.4}", general(12.5_f64), general(12.5_f64)),
+//!            "      12.5 12.5      ");
+//! // printf("%+010.4g % 010.4g", 12.5, 12.5);
+//! assert_eq!(
+//!     format!("{:+010.4} {:010.4}", general(12.5_f64), general(12.5_f64).space_sign()),
+//!     "+0000012.5  0000012.5",
+//! );
+//! // `-` overrides `0`: printf("%-010.4g", 12.5);
+//! assert_eq!(format!("{:<010.4}", general(12.5_f64)), "12.5      ");
+//! ```
+//!
+//! C promotes `float` to `double`. Binary128 supplies the project's intended
+//! `%Lg` and `%LG` behavior without assuming that the host `long double` has a
+//! compatible ABI:
+//!
+//! ```
+//! use proctor_libc::printf::{general, general_upper};
+//!
+//! let float_value = 1.25_f32;
+//! // printf("%g %G", (double)float_value, (double)float_value);
+//! assert_eq!(
+//!     format!("{} {}", general(float_value), general_upper(float_value)),
+//!     "1.25 1.25",
+//! );
+//!
+//! let long_double_value = f128::f128::new(1.25_f64);
+//! // Intended equivalents: printf("%Lg %LG", long_double_value, long_double_value);
+//! assert_eq!(
+//!     format!("{} {}", general(long_double_value), general_upper(long_double_value)),
+//!     "1.25 1.25",
+//! );
+//! ```
+//!
 //! Floating formatting uses the C locale's `.` radix character and
 //! round-to-nearest, ties-to-even. It does not track an active process locale
 //! or floating-point rounding mode. Binary128 formatting is tested directly
-//! and by invariants, but is not differentially checked against host `%Lf` on
-//! systems where C `long double` has a different representation.
+//! and by invariants, but is not differentially checked against host
+//! long-double conversions on systems where C `long double` has a different
+//! representation.
 //!
 //! Only `f32`, `f64`, and `f128::f128` are accepted:
 //!
@@ -382,7 +480,7 @@ pub trait SignedValue: private::SealedSigned {}
 pub trait UnsignedValue: private::SealedUnsigned {}
 
 /// A primitive floating-point value accepted by [`fixed`], [`fixed_upper`],
-/// and [`scientific`].
+/// [`scientific`], [`general`], and [`general_upper`].
 ///
 /// This sealed trait is implemented for `f32`, `f64`, and
 /// [`struct@f128::f128`].
@@ -678,6 +776,88 @@ impl<T: FixedValue> fmt::UpperExp for Scientific<T> {
     }
 }
 
+/// Wraps a floating-point primitive for C `printf`-compatible `g` formatting.
+///
+/// Rust has no native general floating-point conversion, so this wrapper is
+/// required for every `%g`, `%lg`, or intended binary128 `%Lg` conversion. See
+/// the [module documentation](self) for paired Rust and C examples of every
+/// supported type, precision, and flag.
+pub fn general<T: FixedValue>(value: T) -> General<T> {
+    General {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` lowercase general formatting.
+#[derive(Clone, Copy)]
+pub struct General<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> General<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{}", general(1.25_f32).space_sign())` is equivalent to
+    /// `printf("% g", (double)1.25f)`, while formatting the same wrapper with
+    /// `{:+}` is equivalent to `printf("%+ g", (double)1.25f)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::Display for General<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_general(
+            f,
+            FloatParts::from_value(self.value),
+            self.space_sign,
+            false,
+        )
+    }
+}
+
+/// Wraps a floating-point primitive for C `printf`-compatible `G` formatting.
+///
+/// This has the same general-format semantics as [`general`] and uses `E`,
+/// `INF`, and `NAN`. See the [module documentation](self) for paired Rust and C
+/// examples of `%G`, `%lG`, `%LG`, and every supported flag.
+pub fn general_upper<T: FixedValue>(value: T) -> GeneralUpper<T> {
+    GeneralUpper {
+        value,
+        space_sign: false,
+    }
+}
+
+/// A type-preserving adapter for C `printf` uppercase general formatting.
+#[derive(Clone, Copy)]
+pub struct GeneralUpper<T: FixedValue> {
+    value: T,
+    space_sign: bool,
+}
+
+impl<T: FixedValue> GeneralUpper<T> {
+    /// Requests C's space-sign flag for a nonnegative value.
+    ///
+    /// A Rust `+` formatting flag overrides the space. For example,
+    /// `format!("{}", general_upper(1.25_f64).space_sign())` is equivalent to
+    /// `printf("% G", 1.25)`, while formatting the same wrapper with `{:+}` is
+    /// equivalent to `printf("%+ G", 1.25)`.
+    pub fn space_sign(mut self) -> Self {
+        self.space_sign = true;
+        self
+    }
+}
+
+impl<T: FixedValue> fmt::Display for GeneralUpper<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_general(f, FloatParts::from_value(self.value), self.space_sign, true)
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FloatParts {
     Finite {
@@ -812,6 +992,43 @@ fn write_scientific(
     write_float_field(f, negative, &body, finite, space_sign)
 }
 
+fn write_general(
+    f: &mut Formatter<'_>,
+    parts: FloatParts,
+    space_sign: bool,
+    uppercase: bool,
+) -> fmt::Result {
+    let (negative, body, finite) = match parts {
+        FloatParts::Finite {
+            negative,
+            significand,
+            binary_exponent,
+        } => (
+            negative,
+            general_body(
+                significand,
+                binary_exponent,
+                f.precision().unwrap_or(6).max(1),
+                f.alternate(),
+                uppercase,
+            ),
+            true,
+        ),
+        FloatParts::Infinite { negative } => (
+            negative,
+            if uppercase { "INF" } else { "inf" }.to_owned(),
+            false,
+        ),
+        FloatParts::Nan { negative } => (
+            negative,
+            if uppercase { "NAN" } else { "nan" }.to_owned(),
+            false,
+        ),
+    };
+
+    write_float_field(f, negative, &body, finite, space_sign)
+}
+
 fn write_float_field(
     f: &mut Formatter<'_>,
     negative: bool,
@@ -858,6 +1075,17 @@ fn scientific_body(
     alternate: bool,
     uppercase: bool,
 ) -> String {
+    let (digits, decimal_exponent) =
+        rounded_significant_digits(significand, binary_exponent, precision + 1);
+    scientific_body_from_digits(&digits, decimal_exponent, alternate, uppercase)
+}
+
+fn rounded_significant_digits(
+    significand: u128,
+    binary_exponent: i32,
+    significant_digits: usize,
+) -> (String, i32) {
+    debug_assert_ne!(significant_digits, 0);
     let mut decimal_exponent = if significand == 0 {
         0
     } else {
@@ -865,23 +1093,23 @@ fn scientific_body(
     };
 
     let rounded = if decimal_exponent <= 0 {
-        let decimal_shift = precision + (-decimal_exponent) as usize;
+        let decimal_shift = significant_digits - 1 + (-decimal_exponent) as usize;
         scale_and_round(significand, binary_exponent, decimal_shift)
-    } else if precision >= decimal_exponent as usize {
+    } else if significant_digits > decimal_exponent as usize {
         scale_and_round(
             significand,
             binary_exponent,
-            precision - decimal_exponent as usize,
+            significant_digits - 1 - decimal_exponent as usize,
         )
     } else {
         scale_down_and_round(
             significand,
             binary_exponent,
-            decimal_exponent as usize - precision,
+            decimal_exponent as usize + 1 - significant_digits,
         )
     };
 
-    let expected_digits = precision + 1;
+    let expected_digits = significant_digits;
     let mut digits = rounded.to_str_radix(10);
     match digits.len().cmp(&expected_digits) {
         std::cmp::Ordering::Greater => {
@@ -894,7 +1122,17 @@ fn scientific_body(
         std::cmp::Ordering::Equal => {}
     }
 
-    let mut body = String::with_capacity(expected_digits + 8);
+    (digits, decimal_exponent)
+}
+
+fn scientific_body_from_digits(
+    digits: &str,
+    decimal_exponent: i32,
+    alternate: bool,
+    uppercase: bool,
+) -> String {
+    let precision = digits.len() - 1;
+    let mut body = String::with_capacity(digits.len() + 8);
     body.push_str(&digits[..1]);
     if precision != 0 || alternate {
         body.push('.');
@@ -912,6 +1150,54 @@ fn scientific_body(
     }
     body.push_str(&exponent_digits);
     body
+}
+
+fn general_body(
+    significand: u128,
+    binary_exponent: i32,
+    precision: usize,
+    alternate: bool,
+    uppercase: bool,
+) -> String {
+    let (digits, decimal_exponent) =
+        rounded_significant_digits(significand, binary_exponent, precision);
+    let use_scientific =
+        decimal_exponent < -4 || (decimal_exponent >= 0 && decimal_exponent as usize >= precision);
+
+    if use_scientific {
+        let mut body = scientific_body_from_digits(&digits, decimal_exponent, alternate, uppercase);
+        if !alternate {
+            trim_scientific_fraction(&mut body);
+        }
+        body
+    } else {
+        let fractional_digits = (precision as i32 - (decimal_exponent + 1)) as usize;
+        let mut body = fixed_body(significand, binary_exponent, fractional_digits, alternate);
+        if !alternate {
+            trim_fixed_fraction(&mut body);
+        }
+        body
+    }
+}
+
+fn trim_fixed_fraction(body: &mut String) {
+    if let Some(point) = body.find('.') {
+        while body.as_bytes().last() == Some(&b'0') {
+            body.pop();
+        }
+        if body.len() == point + 1 {
+            body.pop();
+        }
+    }
+}
+
+fn trim_scientific_fraction(body: &mut String) {
+    let exponent = body
+        .find(['e', 'E'])
+        .expect("scientific body always has an exponent marker");
+    let suffix = body.split_off(exponent);
+    trim_fixed_fraction(body);
+    body.push_str(&suffix);
 }
 
 fn decimal_exponent(significand: u128, binary_exponent: i32) -> i32 {

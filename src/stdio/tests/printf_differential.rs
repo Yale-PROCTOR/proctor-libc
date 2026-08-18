@@ -1,12 +1,12 @@
-//! Differential tests for the integer, fixed-point, and scientific `printf`
-//! formatting adapters.
+//! Differential tests for the integer and floating-point `printf` formatting
+//! adapters.
 
 use std::ffi::CStr;
 
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed};
 
-use super::{fixed, fixed_upper, scientific, signed, unsigned};
+use super::{fixed, fixed_upper, general, general_upper, scientific, signed, unsigned};
 
 const BUFFER_SIZE: usize = 256;
 
@@ -87,6 +87,35 @@ define_oracle!(oracle_c_ulonglong, libc::c_ulonglong);
 define_oracle!(oracle_ssize_t, libc::ssize_t);
 define_oracle!(oracle_size_t, libc::size_t);
 define_oracle!(oracle_c_double, libc::c_double);
+
+fn snprintf_c_double(c_format: &'static [u8], value: libc::c_double) -> String {
+    let mut buffer = [0 as libc::c_char; BUFFER_SIZE];
+    let format = CStr::from_bytes_with_nul(c_format)
+        .expect("test format must have exactly one trailing NUL")
+        .to_string_lossy();
+    // SAFETY: callers supply a static, NUL-terminated format containing
+    // exactly one conversion for a `double`. The destination is writable for
+    // `BUFFER_SIZE` elements, and the initialized prefix is inspected only
+    // after checking for errors and truncation.
+    let written = unsafe {
+        libc::snprintf(
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            c_format.as_ptr().cast(),
+            value,
+        )
+    };
+    assert!(written >= 0, "snprintf failed: format={format:?}");
+    let written = written as usize;
+    assert!(
+        written < buffer.len(),
+        "snprintf truncated output: format={format:?}, required={written}, capacity={}",
+        buffer.len(),
+    );
+    // `snprintf` initialized these bytes before its trailing NUL.
+    let output = unsafe { std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), written) };
+    String::from_utf8(output.to_vec()).expect("floating-point output is ASCII")
+}
 
 macro_rules! pair {
     ($oracle:ident, $c_format:expr, $abi_value:expr, $rust_output:expr, $type_name:expr, $value:expr) => {
@@ -1095,6 +1124,67 @@ fn check_scientific_f64(value: f64) {
     scientific_matrix!(value, "f64");
 }
 
+macro_rules! general_matrix {
+    ($value:expr, $type_name:literal) => {{
+        let value = $value;
+        let abi_value = value as libc::c_double;
+
+        macro_rules! check {
+            ($c_format:literal, $rust_format:literal, $wrapper:expr) => {
+                pair!(
+                    oracle_c_double,
+                    concat!($c_format, "\0").as_bytes(),
+                    abi_value,
+                    format!($rust_format, $wrapper),
+                    $type_name,
+                    value
+                )
+            };
+        }
+
+        check!("%g", "{}", general(value));
+        check!("%G", "{}", general_upper(value));
+        check!("%lg", "{}", general(value));
+        check!("%lG", "{}", general_upper(value));
+
+        check!("%.0g", "{:.0}", general(value));
+        check!("%.1g", "{:.1}", general(value));
+        check!("%.2g", "{:.2}", general(value));
+        check!("%.6g", "{:.6}", general(value));
+        check!("%.17g", "{:.17}", general(value));
+        check!("%.0G", "{:.0}", general_upper(value));
+        check!("%.6G", "{:.6}", general_upper(value));
+
+        check!("%+g", "{:+}", general(value));
+        check!("% g", "{}", general(value).space_sign());
+        check!("%+ g", "{:+}", general(value).space_sign());
+        check!("%+G", "{:+}", general_upper(value));
+        check!("% G", "{}", general_upper(value).space_sign());
+
+        check!("%20.6g", "{:20.6}", general(value));
+        check!("%-20.6g", "{:<20.6}", general(value));
+        check!("%020.6g", "{:020.6}", general(value));
+        check!("%-020.6g", "{:<020.6}", general(value));
+        check!("%+020.6g", "{:+020.6}", general(value));
+        check!("% 020.6g", "{:020.6}", general(value).space_sign());
+
+        check!("%#.0g", "{:#.0}", general(value));
+        check!("%#.6g", "{:#.6}", general(value));
+        check!("%#20.6g", "{:#20.6}", general(value));
+        check!("%#020.6g", "{:#020.6}", general(value));
+        check!("%-#020.6g", "{:<#020.6}", general(value));
+        check!("%#.6G", "{:#.6}", general_upper(value));
+    }};
+}
+
+fn check_general_f32(value: f32) {
+    general_matrix!(value, "f32");
+}
+
+fn check_general_f64(value: f64) {
+    general_matrix!(value, "f64");
+}
+
 #[test]
 fn all_i8_values_match_libc() {
     for value in i8::MIN..=i8::MAX {
@@ -1495,6 +1585,139 @@ fn deterministic_f64_scientific_values_match_libc() {
     }
 }
 
+#[test]
+fn deterministic_f32_general_values_match_libc() {
+    for value in [
+        f32::NEG_INFINITY,
+        f32::MIN,
+        -999_999.4,
+        -0.000_099_999_95,
+        -0.0,
+        0.0,
+        f32::from_bits(1),
+        f32::MIN_POSITIVE,
+        0.000_009_999_995,
+        0.000_01,
+        0.000_1,
+        0.999_999_5,
+        1.0,
+        9.999_995,
+        99_999.95,
+        999_999.4,
+        f32::MAX,
+        f32::INFINITY,
+        f32::NAN,
+        f32::from_bits(f32::NAN.to_bits() | (1 << 31)),
+    ] {
+        check_general_f32(value);
+    }
+}
+
+#[test]
+fn deterministic_f64_general_values_match_libc() {
+    for value in [
+        f64::NEG_INFINITY,
+        -1.0e300,
+        -999_999.4,
+        -0.000_099_999_95,
+        -0.0,
+        0.0,
+        f64::from_bits(1),
+        f64::MIN_POSITIVE,
+        0.000_009_999_995,
+        0.000_01,
+        0.000_1,
+        0.999_999_5,
+        1.0,
+        9.999_995,
+        99_999.95,
+        999_999.4,
+        1.0e300,
+        f64::MAX,
+        f64::INFINITY,
+        f64::NAN,
+        f64::from_bits(f64::NAN.to_bits() | (1 << 63)),
+    ] {
+        check_general_f64(value);
+    }
+}
+
+fn check_dr_233_alternate_boundary(
+    c_format: &'static [u8],
+    abi_value: libc::c_double,
+    wrapper_output: String,
+    standard_output: &str,
+    _gnu_output: &str,
+) {
+    assert_eq!(wrapper_output, standard_output);
+    let libc_output = snprintf_c_double(c_format, abi_value);
+    if libc_output == standard_output {
+        return;
+    }
+
+    // WG14 DR 233 requires the alternate form to retain the significant
+    // zeros. GNU printf is known to omit them at this rounding/style boundary.
+    #[cfg(target_env = "gnu")]
+    assert_eq!(libc_output, _gnu_output);
+    #[cfg(not(target_env = "gnu"))]
+    assert_eq!(libc_output, standard_output);
+}
+
+#[test]
+fn dr_233_alternate_general_boundary_is_explicitly_checked_against_libc() {
+    for value in [999_999.5_f32, -999_999.5_f32] {
+        let negative = value.is_sign_negative();
+        check_dr_233_alternate_boundary(
+            b"%#.6g\0",
+            libc::c_double::from(value),
+            format!("{:#.6}", general(value)),
+            if negative {
+                "-1.00000e+06"
+            } else {
+                "1.00000e+06"
+            },
+            if negative { "-1.e+06" } else { "1.e+06" },
+        );
+        check_dr_233_alternate_boundary(
+            b"%#.6G\0",
+            libc::c_double::from(value),
+            format!("{:#.6}", general_upper(value)),
+            if negative {
+                "-1.00000E+06"
+            } else {
+                "1.00000E+06"
+            },
+            if negative { "-1.E+06" } else { "1.E+06" },
+        );
+    }
+
+    for value in [999_999.5_f64, -999_999.5_f64] {
+        let negative = value.is_sign_negative();
+        check_dr_233_alternate_boundary(
+            b"%#.6g\0",
+            value,
+            format!("{:#.6}", general(value)),
+            if negative {
+                "-1.00000e+06"
+            } else {
+                "1.00000e+06"
+            },
+            if negative { "-1.e+06" } else { "1.e+06" },
+        );
+        check_dr_233_alternate_boundary(
+            b"%#.6G\0",
+            value,
+            format!("{:#.6}", general_upper(value)),
+            if negative {
+                "-1.00000E+06"
+            } else {
+                "1.00000E+06"
+            },
+            if negative { "-1.E+06" } else { "1.E+06" },
+        );
+    }
+}
+
 fn proptest_config() -> Config {
     Config {
         cases: 512,
@@ -1542,5 +1765,13 @@ proptest! {
     #[test]
     fn generated_f64_scientific_values_match_libc(bits in any::<u64>()) {
         check_scientific_f64(f64::from_bits(bits));
+    }
+    #[test]
+    fn generated_f32_general_values_match_libc(bits in any::<u32>()) {
+        check_general_f32(f32::from_bits(bits));
+    }
+    #[test]
+    fn generated_f64_general_values_match_libc(bits in any::<u64>()) {
+        check_general_f64(f64::from_bits(bits));
     }
 }
