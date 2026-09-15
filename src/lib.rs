@@ -10,11 +10,16 @@
 //! Function documentation is intentionally concise because behavior follows libc;
 //! it notes Rust-specific return values and error handling where needed.
 
+pub mod ctype;
 pub mod stdio;
 pub mod stdlib;
 pub mod string;
 pub mod strings;
 
+pub use ctype::{
+    isalnum, isalpha, isblank, iscntrl, isdigit, isgraph, islower, isprint, ispunct, isspace,
+    isupper, isxdigit, tolower, toupper,
+};
 pub use stdio::printf;
 pub use stdio::{
     fgetc, fgets, fputc, fputs, fread, fseek, ftell, fwrite, getchar, putchar, puts, rewind,
