@@ -26,7 +26,10 @@ pub use stdio::{
 };
 #[cfg(target_os = "linux")]
 pub use stdio::{remove, rename};
-pub use stdlib::{atof, atoi, atol, strtod, strtof, strtol, strtold, strtoul};
+pub use stdlib::{
+    atof, atoi, atol, strtod, strtod_mut, strtof, strtof_mut, strtol, strtol_mut, strtold,
+    strtold_mut, strtoul, strtoul_mut,
+};
 pub use string::{
     memchr, memchr_mut, memcmp, strcat, strchr, strchr_mut, strcmp, strcpy, strcspn, strdup,
     strlen, strncat, strncmp, strncpy, strndup, strrchr, strrchr_mut, strspn, strstr, strstr_mut,

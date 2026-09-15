@@ -107,6 +107,18 @@ pub fn strtod(buf: &[i8]) -> ((f64, &[i8]), Result<(), StrtoFloatError>) {
     ((f64::from_bits(bits as u64), suffix), status)
 }
 
+/// Converts the initial floating-point number in `buf` to an `f64`.
+///
+/// Returns the converted value, the mutable unconsumed suffix, and the
+/// conversion status. `StrtoFloatError::OutOfRange` is the only error variant
+/// and reports overflow or inexact underflow.
+pub fn strtod_mut(buf: &mut [i8]) -> ((f64, &mut [i8]), Result<(), StrtoFloatError>) {
+    let buf_len = buf.len();
+    let ((value, suffix), status) = strtod(buf);
+    let suffix_start = buf_len - suffix.len();
+    ((value, &mut buf[suffix_start..]), status)
+}
+
 /// Converts the initial floating-point number in `buf` to an `f32`.
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
@@ -117,6 +129,18 @@ pub fn strtof(buf: &[i8]) -> ((f32, &[i8]), Result<(), StrtoFloatError>) {
     ((f32::from_bits(bits as u32), suffix), status)
 }
 
+/// Converts the initial floating-point number in `buf` to an `f32`.
+///
+/// Returns the converted value, the mutable unconsumed suffix, and the
+/// conversion status. `StrtoFloatError::OutOfRange` is the only error variant
+/// and reports overflow or inexact underflow.
+pub fn strtof_mut(buf: &mut [i8]) -> ((f32, &mut [i8]), Result<(), StrtoFloatError>) {
+    let buf_len = buf.len();
+    let ((value, suffix), status) = strtof(buf);
+    let suffix_start = buf_len - suffix.len();
+    ((value, &mut buf[suffix_start..]), status)
+}
+
 /// Converts the initial floating-point number in `buf` to [`struct@f128::f128`].
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
@@ -125,6 +149,18 @@ pub fn strtof(buf: &[i8]) -> ((f32, &[i8]), Result<(), StrtoFloatError>) {
 pub fn strtold(buf: &[i8]) -> ((f128::f128, &[i8]), Result<(), StrtoFloatError>) {
     let ((bits, suffix), status) = strto_float_bits(buf, F128_FORMAT);
     ((f128_from_bits(bits), suffix), status)
+}
+
+/// Converts the initial floating-point number in `buf` to [`struct@f128::f128`].
+///
+/// Returns the converted value, the mutable unconsumed suffix, and the
+/// conversion status. `StrtoFloatError::OutOfRange` is the only error variant
+/// and reports overflow or inexact underflow.
+pub fn strtold_mut(buf: &mut [i8]) -> ((f128::f128, &mut [i8]), Result<(), StrtoFloatError>) {
+    let buf_len = buf.len();
+    let ((value, suffix), status) = strtold(buf);
+    let suffix_start = buf_len - suffix.len();
+    ((value, &mut buf[suffix_start..]), status)
 }
 
 fn strto_float_bits(
@@ -600,6 +636,19 @@ pub fn strtol(buf: &[i8], base: i32) -> ((i64, &[i8]), Result<(), StrtoIntError>
     ((value, &buf[conversion.end..]), Ok(()))
 }
 
+/// Converts the initial integer in `buf` using `base`.
+///
+/// Returns the converted value, the mutable unconsumed suffix, and the
+/// conversion status. `StrtoIntError::InvalidBase` and
+/// `StrtoIntError::OutOfRange` are the only error variants; they report an
+/// unsupported base and overflow, respectively.
+pub fn strtol_mut(buf: &mut [i8], base: i32) -> ((i64, &mut [i8]), Result<(), StrtoIntError>) {
+    let buf_len = buf.len();
+    let ((value, suffix), status) = strtol(buf, base);
+    let suffix_start = buf_len - suffix.len();
+    ((value, &mut buf[suffix_start..]), status)
+}
+
 /// Converts the initial unsigned integer in `buf` using `base`.
 ///
 /// Returns the converted value, the unconsumed suffix, and the conversion
@@ -635,6 +684,19 @@ pub fn strtoul(buf: &[i8], base: i32) -> ((u64, &[i8]), Result<(), StrtoIntError
     };
 
     ((value, &buf[conversion.end..]), Ok(()))
+}
+
+/// Converts the initial unsigned integer in `buf` using `base`.
+///
+/// Returns the converted value, the mutable unconsumed suffix, and the
+/// conversion status. `StrtoIntError::InvalidBase` and
+/// `StrtoIntError::OutOfRange` are the only error variants; they report an
+/// unsupported base and overflow, respectively.
+pub fn strtoul_mut(buf: &mut [i8], base: i32) -> ((u64, &mut [i8]), Result<(), StrtoIntError>) {
+    let buf_len = buf.len();
+    let ((value, suffix), status) = strtoul(buf, base);
+    let suffix_start = buf_len - suffix.len();
+    ((value, &mut buf[suffix_start..]), status)
 }
 
 fn scan_integer_subject(buf: &[i8], base: i32) -> Result<IntegerSubject, StrtoIntError> {

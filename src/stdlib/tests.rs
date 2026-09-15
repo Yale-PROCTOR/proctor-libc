@@ -1,5 +1,6 @@
 use super::{
-    StrtoFloatError, StrtoIntError, atof, atoi, atol, strtod, strtof, strtol, strtold, strtoul,
+    StrtoFloatError, StrtoIntError, atof, atoi, atol, strtod, strtod_mut, strtof, strtof_mut,
+    strtol, strtol_mut, strtold, strtold_mut, strtoul, strtoul_mut,
 };
 
 fn i8s(bytes: &[u8]) -> &[i8] {
@@ -40,6 +41,33 @@ fn strtod_parses_decimal_and_returns_the_suffix() {
     assert_eq!(strtod(i8s(b"1000\0")), ((1000.0, i8s(b"\0")), Ok(())));
     assert_eq!(strtod(i8s(b"1200.00\0")), ((1200.0, i8s(b"\0")), Ok(())));
     assert_eq!(strtod(i8s(b"1.00e2\0")), ((100.0, i8s(b"\0")), Ok(())));
+}
+
+#[test]
+fn strtod_mut_returns_a_mutable_suffix() {
+    let mut buf = i8s(b"12.5rest\0ignored").to_vec();
+
+    let ((value, suffix), status) = strtod_mut(&mut buf);
+    assert_eq!(value, 12.5);
+    assert_eq!(status, Ok(()));
+    assert_eq!(suffix, i8s(b"rest\0ignored"));
+    suffix[0] = b'R' as i8;
+
+    assert_eq!(buf, i8s(b"12.5Rest\0ignored"));
+}
+
+#[test]
+fn strtod_mut_returns_the_original_slice_if_there_is_no_subject() {
+    let mut buf = i8s(b"not a number\0").to_vec();
+    let pointer = buf.as_ptr();
+    let length = buf.len();
+
+    let ((value, suffix), status) = strtod_mut(&mut buf);
+
+    assert_eq!(value.to_bits(), 0);
+    assert_eq!(suffix.as_ptr(), pointer);
+    assert_eq!(suffix.len(), length);
+    assert_eq!(status, Ok(()));
 }
 
 #[test]
@@ -106,6 +134,19 @@ fn strtof_rounds_directly_to_f32() {
         strtof(i8s(b"16777217\0")),
         ((16_777_216.0, i8s(b"\0")), Ok(()))
     );
+}
+
+#[test]
+fn strtof_mut_returns_a_mutable_suffix() {
+    let mut buf = i8s(b"0x1.8p+2rest\0").to_vec();
+
+    let ((value, suffix), status) = strtof_mut(&mut buf);
+    assert_eq!(value, 6.0);
+    assert_eq!(status, Ok(()));
+    assert_eq!(suffix, i8s(b"rest\0"));
+    suffix[0] = b'R' as i8;
+
+    assert_eq!(buf, i8s(b"0x1.8p+2Rest\0"));
 }
 
 #[test]
@@ -243,10 +284,53 @@ fn strtold_returns_ieee_binary128_values() {
 }
 
 #[test]
+fn strtold_mut_returns_a_mutable_suffix() {
+    let mut buf = i8s(b"-0x1.8p1rest\0").to_vec();
+
+    let ((value, suffix), status) = strtold_mut(&mut buf);
+    assert_eq!(
+        f128_bits(value),
+        (1_u128 << 127) | (0x4000_u128 << 112) | (1_u128 << 111)
+    );
+    assert_eq!(status, Ok(()));
+    assert_eq!(suffix, i8s(b"rest\0"));
+    suffix[0] = b'R' as i8;
+
+    assert_eq!(buf, i8s(b"-0x1.8p1Rest\0"));
+}
+
+#[test]
 fn strtol_parses_decimal_and_returns_the_suffix() {
     let buf = i8s(b" \t\n\x0b\x0c\r-42xyz\0ignored");
 
     assert_eq!(strtol(buf, 10), ((-42, i8s(b"xyz\0ignored")), Ok(())));
+}
+
+#[test]
+fn strtol_mut_returns_a_mutable_suffix() {
+    let mut buf = i8s(b"-42rest\0ignored").to_vec();
+
+    let ((value, suffix), status) = strtol_mut(&mut buf, 10);
+    assert_eq!(value, -42);
+    assert_eq!(status, Ok(()));
+    assert_eq!(suffix, i8s(b"rest\0ignored"));
+    suffix[0] = b'R' as i8;
+
+    assert_eq!(buf, i8s(b"-42Rest\0ignored"));
+}
+
+#[test]
+fn strtol_mut_preserves_errors_and_the_original_suffix() {
+    let mut buf = i8s(b"10\0").to_vec();
+    let pointer = buf.as_ptr();
+    let length = buf.len();
+
+    let ((value, suffix), status) = strtol_mut(&mut buf, 1);
+
+    assert_eq!(value, 0);
+    assert_eq!(suffix.as_ptr(), pointer);
+    assert_eq!(suffix.len(), length);
+    assert_eq!(status, Err(StrtoIntError::InvalidBase));
 }
 
 #[test]
@@ -415,6 +499,19 @@ fn strtoul_parses_decimal_and_returns_the_suffix() {
     let buf = i8s(b" \t\n\x0b\x0c\r+42xyz\0ignored");
 
     assert_eq!(strtoul(buf, 10), ((42, i8s(b"xyz\0ignored")), Ok(())));
+}
+
+#[test]
+fn strtoul_mut_returns_a_mutable_suffix() {
+    let mut buf = i8s(b"42rest\0ignored").to_vec();
+
+    let ((value, suffix), status) = strtoul_mut(&mut buf, 10);
+    assert_eq!(value, 42);
+    assert_eq!(status, Ok(()));
+    assert_eq!(suffix, i8s(b"rest\0ignored"));
+    suffix[0] = b'R' as i8;
+
+    assert_eq!(buf, i8s(b"42Rest\0ignored"));
 }
 
 #[test]
