@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "proctor-libc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytemuck",
  "f128",
